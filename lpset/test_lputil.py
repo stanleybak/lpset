@@ -7,22 +7,19 @@ import math
 import numpy as np
 
 from scipy.linalg import expm
-from scipy.sparse import csr_matrix, csc_matrix
-from scipy.io import loadmat
+from scipy.sparse import csr_matrix
 
 import swiglpk as glpk
 
-from hylaa import lputil, lpplot
-from hylaa.hybrid_automaton import HybridAutomaton, LinearConstraint
-
-from util import assert_verts_is_box, pair_almost_in
-
 import matplotlib.pyplot as plt
+
+import lputil, lpplot
+from util import assert_verts_is_box, pair_almost_in
 
 def test_from_box():
     'tests from_box'
     
-    lpi = lputil.from_box([[-5, -4], [0, 1]], HybridAutomaton().new_mode('mode_name'))
+    lpi = lputil.from_box([[-5, -4], [0, 1]], has_inputs=False)
 
     assert lpi.basis_mat_pos == (0, 0)
     assert lpi.dims == 2
@@ -46,7 +43,7 @@ def test_from_box():
     up = glpk.GLP_UP
     expected_types = [fx, fx, up, up, up, up]
 
-    expected_names = ["m0_i0", "m0_i1", "m0_c0", "m0_c1"]
+    expected_names = ["i0", "i1", "c0", "c1"]
 
     assert np.allclose(rhs, expected_vec)
     assert types == expected_types
@@ -56,13 +53,13 @@ def test_from_box():
 def test_print_lp():
     'test printing the lp to stdout'
 
-    lpi = lputil.from_box([[-5, -4], [0, 1]], HybridAutomaton().new_mode('mode_name'))
+    lpi = lputil.from_box([[-5, -4], [0, 1]])
     assert str(lpi) is not None
 
 def test_set_basis_matrix():
     'tests lputil set_basis_matrix on harmonic oscillator example'
 
-    lpi = lputil.from_box([[-5, -4], [0, 1]], HybridAutomaton().new_mode('mode_name'))
+    lpi = lputil.from_box([[-5, -4], [0, 1]])
 
     basis = np.array([[0, 1], [-1, 0]], dtype=float)
     lputil.set_basis_matrix(lpi, basis)
@@ -88,7 +85,7 @@ def test_set_basis_matrix():
 def test_check_intersection():
     'tests check_intersection on the harmonic oscillator example'
 
-    lpi = lputil.from_box([[-5, -4], [0, 1]], HybridAutomaton().new_mode('mode_name'))
+    lpi = lputil.from_box([[-5, -4], [0, 1]])
 
     # check if initially y >= 4.5 is possible (should be false)
     direction = np.array([0, -1], dtype=float)
@@ -106,7 +103,7 @@ def test_check_intersection():
 def test_verts():
     'tests verts'
 
-    lpi = lputil.from_box([[-5, -4], [0, 1]], HybridAutomaton().new_mode('mode_name'))
+    lpi = lputil.from_box([[-5, -4], [0, 1]])
 
     plot_vecs = lpplot.make_plot_vecs(4, offset=(math.pi / 4.0))
     verts = lpplot.get_verts(lpi, plot_vecs=plot_vecs)
@@ -116,7 +113,7 @@ def test_verts():
 def test_add_init_constraint():
     'tests add_init_constraint on the harmonic oscillator example'
 
-    lpi = lputil.from_box([[-5, -4], [0, 1]], HybridAutomaton().new_mode('mode_name'))
+    lpi = lputil.from_box([[-5, -4], [0, 1]], has_inputs=False)
 
     # update basis matrix
     basis_mat = np.array([[0, 1], [-1, 0]], dtype=float)
@@ -151,7 +148,7 @@ def test_add_init_constraint():
 def test_replace_init_constraint():
     'tests try_replace_init_constraint on the harmonic oscillator example'
 
-    lpi = lputil.from_box([[-5, -4], [0, 1]], HybridAutomaton().new_mode('mode_name'))
+    lpi = lputil.from_box([[-5, -4], [0, 1]], has_inputs=False)
 
     # update basis matrix
     basis_mat = np.array([[0, 1], [-1, 0]], dtype=float)
@@ -203,7 +200,7 @@ def test_replace_init_constraint():
 def test_get_basis_matrix():
     'tests lputil get_basis_matrix on harmonic oscillator example'
 
-    lpi = lputil.from_box([[-5, -4], [0, 1]], HybridAutomaton().new_mode('mode_name'))
+    lpi = lputil.from_box([[-5, -4], [0, 1]])
 
     basis = np.array([[0, 1], [-1, 0]], dtype=float)
     lputil.set_basis_matrix(lpi, basis)
@@ -215,7 +212,7 @@ def test_get_basis_matrix():
 def test_add_curtime_constraints():
     'tests add_curtime_constraints'
 
-    lpi = lputil.from_box([[-5, -4], [0, 1]], HybridAutomaton().new_mode('mode_name'))
+    lpi = lputil.from_box([[-5, -4], [0, 1]], has_inputs=False)
 
     # new constraint to be added, x <= 3.14, y <= 10
     csr_constraint = csr_matrix(np.array([[1, 0], [0, 1]], dtype=float))
@@ -250,7 +247,7 @@ def test_add_curtime_constraints():
 def test_add_reset_variables():
     'tests add_reset_variables'
     
-    lpi = lputil.from_box([[-5, -4], [0, 1]], HybridAutomaton().new_mode('mode_name'))
+    lpi = lputil.from_box([[-5, -4], [0, 1]], has_inputs=False)
 
     reset_csr = csr_matrix(2 * np.identity(2))
     mode_id = 1
@@ -282,7 +279,7 @@ def test_add_reset_variables():
     up = glpk.GLP_UP
     expected_types = [fx, fx, up, up, up, up, fx, fx, fx, fx]
 
-    expected_names = ["m0_i0", "m0_i1", "m0_c0", "m0_c1", "m1_i0_t13", "m1_i1", "m1_c0", "m1_c1"]
+    expected_names = ["i0", "i1", "c0", "c1", "i0_t13", "i1", "c0", "c1"]
 
     assert np.allclose(rhs, expected_vec)
     assert types == expected_types
@@ -318,9 +315,7 @@ def test_add_reset_variables():
 def test_add_reset_inputs():
     'tests add_reset_variables'
 
-    mode = HybridAutomaton().new_mode('mode_name')
-    
-    lpi = lputil.from_box([[-5, -4], [0, 1]], mode)
+    lpi = lputil.from_box([[-5, -4], [0, 1]])
 
     reset_csr = csr_matrix(2 * np.identity(2))
     mode_id = 1
@@ -381,7 +376,7 @@ def test_reset_less_dims():
     project onto just the y variable multiplied by 0.5
     '''
     
-    lpi = lputil.from_box([[-5, -4], [0, 1]], HybridAutomaton().new_mode('mode_name'))
+    lpi = lputil.from_box([[-5, -4], [0, 1]])
     assert lpi.dims == 2
 
     reset_csr = csr_matrix(np.array([[0, 0.5]], dtype=float))
@@ -456,7 +451,7 @@ def test_reset_minkowski():
 
     '''
     
-    lpi = lputil.from_box([[-5, -4], [0, 1]], HybridAutomaton().new_mode('mode_name'))
+    lpi = lputil.from_box([[-5, -4], [0, 1]])
 
     reset_csr = csr_matrix([[1, 0], [0, 1], [0, 0]], dtype=float)
     mode_id = 1
@@ -516,7 +511,7 @@ def test_init_triangle():
     constraints_mat = [[1, 1], [-1, 0], [0, -1]]
     constraints_rhs = [1, 0, 0]
 
-    lpi = lputil.from_constraints(constraints_mat, constraints_rhs, HybridAutomaton().new_mode('mode_name'))
+    lpi = lputil.from_constraints(constraints_mat, constraints_rhs)
 
     mat = lpi.get_full_constraints()
     types = lpi.get_types()
@@ -558,7 +553,7 @@ def test_init_triangle():
 def test_get_box_center():
     'test get_box_center'
 
-    lpi = lputil.from_box([[-5, -4], [0, 1]], HybridAutomaton().new_mode('mode_name'))
+    lpi = lputil.from_box([[-5, -4], [0, 1]])
 
     pt = lputil.get_box_center(lpi)
     assert len(pt) == 2
@@ -637,51 +632,6 @@ def test_direction_matrix_empty():
 
             assert np.dot(row_a, row_b) < 1e-6, "rows should be orthononal"
 
-
-
-def test_reject_constant_inputs():
-    'tests the detection of B matrix + constraints where an input is fixed to a constant'
-
-    # x' = Ax + Bu
-    # x: [[1, 0], [0, 1]]
-
-    mode = HybridAutomaton().new_mode('mode_name')
-    mode.set_dynamics(np.identity(2))
-
-    b_mat = np.identity(2)
-    b_con = [[1, 0], [-1, 0], [0, -1], [0, -1]]
-    b_rhs = [1, 0, 2, -2]
-
-    try:
-        mode.set_inputs(b_mat, b_con, b_rhs)
-        assert False, "expected fixed inputs to be rejected"
-    except AssertionError:
-        pass
-
-    b_rhs = [1, 0, 2, -1]
-    mode.set_inputs(b_mat, b_con, b_rhs)
-    # should be okay
-
-    b_mat = [[1, 1], [1, 1]]
-    b_rhs = [1, 0, 2, -2]
-    mode.set_inputs(b_mat, b_con, b_rhs)
-    # should be okay (b_mat is not identity)
-
-    b_mat = np.identity(2)
-    b_con = [[1, 1], [-1, -1], [1, -1], [-1, 1]]
-    b_rhs = [1, 0, 2, -2]
-    mode.set_inputs(b_mat, b_con, b_rhs)
-    # should be okay
-
-    b_mat = np.identity(2)
-    b_con = [[1, 1], [-1, -1], [1, -1], [-1, 1]]
-    b_rhs = [1, -2, 2, -2]
-    try:
-        mode.set_inputs(b_mat, b_con, b_rhs)
-        assert False, "expected unsat inputs to be rejected"
-    except AssertionError:
-        pass
-
 def test_box_inputs():
     'tests from_box with a simple input effects matrix'
 
@@ -694,12 +644,12 @@ def test_box_inputs():
     # step 1: [1, 11] x [2, 21]
     # step 2: [2, 21] x [4, 41]
 
-    mode = HybridAutomaton().new_mode('mode_name')
-    mode.set_dynamics(np.zeros((2, 2)))
-    mode.set_inputs([[1, 0], [0, 2]], [[1, 0], [-1, 0], [0, 1], [0, -1]], [10, -1, 10, -1])
+    ie_mat = [[1, 0], [0, 2]]
+    ie_constraints = [[1, 0], [-1, 0], [0, 1], [0, -1]]
+    ie_rhs = [10, -1, 10, -1]
 
     init_box = [[0, 1], [0, 1]]
-    lpi = lputil.from_box(init_box, mode)
+    lpi = lputil.from_box(init_box)
 
     assert lpi.basis_mat_pos == (0, 0)
     assert lpi.dims == 2
@@ -739,11 +689,8 @@ def test_box_inputs():
     assert_verts_is_box(verts, init_box)
 
     # do step 1
-    mode.init_time_elapse(1.0)
-    basis_mat, input_mat = mode.time_elapse.get_basis_matrix(1)
-
     lputil.set_basis_matrix(lpi, basis_mat)
-    lputil.add_input_effects_matrix(lpi, input_mat, mode)
+    lputil.add_input_effects_matrix(lpi, ie_mat, ie_)
 
     mat = lpi.get_full_constraints()
     types = lpi.get_types()
@@ -782,9 +729,7 @@ def test_box_inputs():
     assert_verts_is_box(verts, [(1, 11), (2, 21)])
 
     # do step 2
-    basis_mat, input_mat = mode.time_elapse.get_basis_matrix(2)
-    lputil.set_basis_matrix(lpi, basis_mat)
-    lputil.add_input_effects_matrix(lpi, input_mat, mode)
+    lputil.add_input_effects_matrix(lpi, input_mat, ie_constraints, ie_rhs)
 
     verts = lpplot.get_verts(lpi)
     assert_verts_is_box(verts, [(2, 21), (4, 41)])
@@ -792,7 +737,7 @@ def test_box_inputs():
 def test_bloat():
     'tests bloat'
     
-    lpi = lputil.from_box([[-5, -4], [0, 1]], HybridAutomaton().new_mode('mode_name'))
+    lpi = lputil.from_box([[-5, -4], [0, 1]])
 
     lputil.bloat(lpi, 0.5)
 
@@ -803,7 +748,7 @@ def test_bloat():
 def test_scale():
     'tests scale'
     
-    lpi = lputil.from_box([[4, 5], [-1, 1]], HybridAutomaton().new_mode('mode_name'))
+    lpi = lputil.from_box([[4, 5], [-1, 1]])
 
     lputil.scale_with_bm(lpi, 2.0)
 
@@ -814,12 +759,10 @@ def test_scale():
 def test_minkowski_sum_box():
     'tests minkowski_sum with 2 box sets'
 
-    mode = HybridAutomaton().new_mode('mode_name')
-    
-    lpi1 = lputil.from_box([[-1, 1], [-2, 2]], mode)
-    lpi2 = lputil.from_box([[-.1, .1], [-.2, .2]], mode)
+    lpi1 = lputil.from_box([[-1, 1], [-2, 2]])
+    lpi2 = lputil.from_box([[-.1, .1], [-.2, .2]])
 
-    lpi = lputil.minkowski_sum([lpi1, lpi2], mode)
+    lpi = lputil.minkowski_sum([lpi1, lpi2])
 
     verts = lpplot.get_verts(lpi)
 
@@ -828,15 +771,13 @@ def test_minkowski_sum_box():
 def test_minkowski_box_diamond():
     'tests minkowski_sum of a box and a diamond'
 
-    mode = HybridAutomaton().new_mode('mode_name')
-    
-    lpi1 = lputil.from_box([[-1, 1], [-1, 1]], mode)
+    lpi1 = lputil.from_box([[-1, 1], [-1, 1]])
 
     # -1 <= x + y <= 1
     # -1 <= x - y <= 1
     constraints_mat = [[1, 1], [-1, -1], [1, -1], [-1, 1]]
     constraints_rhs = [1, 1, 1, 1]
-    lpi2 = lputil.from_constraints(constraints_mat, constraints_rhs, mode)
+    lpi2 = lputil.from_constraints(constraints_mat, constraints_rhs)
     
     #verts = lpplot.get_verts(lpi1)
     #xs, ys = zip(*verts)
@@ -846,7 +787,7 @@ def test_minkowski_box_diamond():
     #xs, ys = zip(*verts)
     #plt.plot(xs, ys, 'b--')
 
-    lpi = lputil.minkowski_sum([lpi1, lpi2], mode)
+    lpi = lputil.minkowski_sum([lpi1, lpi2])
 
     #verts = lpplot.get_verts(lpi)
     #xs, ys = zip(*verts)
@@ -865,14 +806,12 @@ def test_minkowski_box_diamond():
 def test_from_input_constraints():
     'test making an lpi set from input constraints'
 
-    mode = HybridAutomaton().new_mode('mode_name')
-
     b_mat = [[1], [0]]
     b_constraints = [[1], [-1]]
     b_rhs = [0.2, 0.2]
 
     # result should have two vertices, at (-0.2, 0) and (0.2, 0)
-    lpi = lputil.from_input_constraints(b_mat, b_constraints, b_rhs, mode)
+    lpi = lputil.from_input_constraints(b_mat, b_constraints, b_rhs)
 
     print(lpi)
 

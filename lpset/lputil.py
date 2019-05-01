@@ -13,21 +13,20 @@ import scipy as sp
 from scipy.sparse import csr_matrix, csc_matrix, hstack
 
 import swiglpk as glpk
-from hylaa.lpinstance import LpInstance, SwigArray
-from hylaa.timerutil import Timers
+from lpinstance import LpInstance, SwigArray
 
-def from_box(box_list, mode):
+def from_box(dim_interval_list, has_inputs=True):
     'make a new lp instance from a passed-in box'
 
     rhs = []
 
-    for lb, ub in box_list:
+    for lb, ub in dim_interval_list:
         assert lb <= ub, "lower bound ({}) > upper bound ({})".format(lb, ub)
         rhs.append(-lb)
         rhs.append(ub)
 
     # make constraints as csr_matrix
-    dims = len(box_list)
+    dims = len(dim_interval_list)
     data = []
     inds = []
     indptr = [0]
@@ -46,9 +45,9 @@ def from_box(box_list, mode):
     csr = csr_matrix((data, inds, indptr), shape=(2*dims, dims), dtype=float)
     csr.check_format()
 
-    return from_constraints(csr, rhs, mode)
+    return from_constraints(csr, rhs, has_inputs=has_inputs)
 
-def from_zonotope(center, generator_list, mode):
+def from_zonotope(center, generator_list, has_inputs=True):
     'make a new lp instance from the passed in zonotope'
 
     #variables [x1, x2, ..., center_var, alpha1, alpha2, ...]
@@ -91,16 +90,15 @@ def from_zonotope(center, generator_list, mode):
         mat.append([-1 * x for x in row])
         rhs.append(0)
 
-    return from_constraints(mat, rhs, mode, dims=cdims)
+    return from_constraints(mat, rhs, dims=cdims, has_inputs=has_inputs)
 
-def from_constraints(csr, rhs, mode, types=None, names=None, dims=None):
+def from_constraints(csr, rhs, has_inputs=True, types=None, names=None, dims=None):
     '''make a new lp instance from a passed-in set of constraints and rhs
 
     if types/names is None, then assume all constraints are '<=' constriants
 
     if dims is None, assume the number of columns in the csr matrix is the number of variables
-    otherwise, assume the left-most columns in the csr_matrix are the current-time variables 
-
+    otherwise, if int, assume the left-most columns in the csr_matrix are the current-time variables 
     '''
 
     if not isinstance(csr, csr_matrix):
@@ -123,9 +121,9 @@ def from_constraints(csr, rhs, mode, types=None, names=None, dims=None):
     lpi.add_rows_equal_zero(dims)
 
     if names is None:
-        names = ["m{}_i{}".format(mode.mode_id, var_index) for var_index in range(csr.shape[1])]
-        
-    names += ["m{}_c{}".format(mode.mode_id, var_index) for var_index in range(dims)]
+        names = ["i{}".format(var_index) for var_index in range(csr.shape[1])]
+
+    names += ["c{}".format(var_index) for var_index in range(dims)]
     
     lpi.add_cols(names)
 
@@ -135,10 +133,8 @@ def from_constraints(csr, rhs, mode, types=None, names=None, dims=None):
         assert len(types) == len(rhs)
         lpi.add_rows_with_types(types, rhs)
 
-    has_inputs = mode.b_csr is not None
-
     if has_inputs:
-        names = ["m{}_ti{}".format(mode.mode_id, n) for n in range(dims)]
+        names = ["ti{}".format(n) for n in range(dims)]
         lpi.add_cols(names)
 
     # make constraints as csr_matrix
@@ -1115,7 +1111,7 @@ def minkowski_sum(lpi_list, mode):
     # from_constraints assumes left-most variables are current-time variables
     return from_constraints(combined_csr, combined_rhs, mode, types=combined_types, names=combined_names, dims=dims)
 
-def from_input_constraints(b_mat, u_constraints, u_rhs, mode):
+def from_input_constraints(b_mat, u_constraints, u_rhs):
     'create an lpi from input constraints (B matrix and constraints on U)'
 
     if not isinstance(b_mat, csr_matrix):
@@ -1163,4 +1159,5 @@ def from_input_constraints(b_mat, u_constraints, u_rhs, mode):
     combined_csr = csr_matrix((data, indices, indptr), shape=(rows, cols), dtype=float)
 
     # from_constraints assumes left-most variables are current-time variables
-    return from_constraints(combined_csr, combined_rhs, mode, types=combined_types, names=combined_names, dims=dims)
+    return from_constraints(combined_csr, combined_rhs, has_inputs=False,
+                            types=combined_types, names=combined_names, dims=dims)
