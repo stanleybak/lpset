@@ -7,11 +7,13 @@ The code was initially extracted as the representation used by the Hylaa tool (h
 Lpset is written in python3. A .dockerfile is included with dependency installation instructions. You will also need to update PYTHONPATH to point to the parent of the lpset folder so you can use the library in your code.
 
 # Set Operations
-* Linear transformation, f(A, S): {Ax | x \in S}
-* Minkowski sum, f(S1, S2): {x = a + b | a \in S1 and b \in S2}
-* Minkowski difference, f(S1, S2): {x = a + b | a \in S1 and b \in S2}
-* Convex hull, f(S1, S2): 
+* __Linear transformation__, f(A, S): {Ax | x \in S}
+* **Minkowski sum**, f(S1, S2): {x = a + b | a \in S1 and b \in S2}
+* **Minkowski difference**, f(S1, S2): {x = a + b | a \in S1 and b \in S2}
+* **Convex hull**, f(S1, S2):
 
 # Query Operations
-* feasible query: does the set contain any points
-* optimization query (support function): find the point in the set that maximizes the dot product with the given vector
+* **Feasible**: does the set contain any points?
+* **Optimization** (support function): find the point in the set that maximizes the dot product with the given vector?
+* **Point Containtment**: is a given point in the set?
+* **2D Approx Vertices** (plotting): gets a list of vertices of the (approximate) set projected onto two dimensions
