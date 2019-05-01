@@ -1,10 +1,10 @@
 # Lpset
-`Lpset` is a `python3` library for representing sets of states and geometric operations, using an linear programming (LP) formulation representation. The `n`-dimensional set of states is the orthogonal projection of all the LP variables (usually > `n`) onto `n` of the dimensions. Lpset uses a numerical linear programming solver (GLPK) and incremental construction (warm-start) of the LP constraints in order to efficiently implement set operations. In theory we could use an exact LP solver to get exact results, but that is not done here (maybe in the future if this is useful). Note that incremental construction means that most of the operations modify the set in place, and this is usually more efficient than making copies of objects.
+Lpset is a python3 library for representing sets of states and geometric operations, using an linear programming (LP) formulation representation. The n-dimensional set of states is the orthogonal projection of all the LP variables (usually > n) onto n of the dimensions. Lpset uses a numerical linear programming solver (GLPK) and incremental construction (warm-start) of the LP constraints in order to efficiently implement set operations. In theory we could use an exact LP solver to get exact results, but that is not done here (maybe in the future if this is useful). Note that incremental construction means that most of the operations modify the set in place, and this is usually more efficient than making copies of objects.
 
 The code was initially extracted from the set representation used by the Hylaa tool (https://github.com/stanleybak/hylaa). The development was done by Stanley Bak.
 
 # Installation
-`Lpset` is written in `python3`. A `.dockerfile` is included with dependency installation instructions. Remember to update `PYTHONPATH` to point to the parent of the `lpset` folder in order to use the library in your code.
+Lpset is written in python3. A `.dockerfile` is included with dependency installation instructions. Remember to update `PYTHONPATH` to point to the parent of the `lpset` folder in order to use the library in your code.
 
 # Set Operations
 * **Linear Transformation**, f(A, S): {Ax | x \in S}
