@@ -1,36 +1,17 @@
 '''
 Stanley Bak
 May 2018
-GLPK python <-> C++ interface
+GLPK python interface using swiglpk
 '''
 
-from termcolor import colored
-
-import numpy as np
-from scipy.sparse import csr_matrix, csc_matrix
 import swiglpk as glpk
+from util import Freezable
 
-from hylaa.util import Freezable
-from hylaa.timerutil import Timers
+from scipy.sparse import csr_matrix
+import numpy as np
 
-class StaticSettings(): # pylint: disable=too-few-public-methods
-    'Static settings'
-
-    # swiglpk has a memory leak: https://github.com/biosustain/swiglpk/issues/31
-    # how much memory should we allow to be used before we print a message and quit
-    MAX_MEMORY_SWIGLPK_LEAK_GB = 8.0
-
-def simple_print(s):
-    'print using the print function'
-
-    print(s)
-
-class LpInstance(Freezable): # pylint: disable=too-many-public-methods
+class LpInstance(Freezable):
     'Linear programming wrapper using glpk (through swiglpk python interface)'
-
-    print_normal = simple_print # function for printing normal information (reassigned in core)
-    print_verbose = simple_print # function for printing verbose information (reassigned in core)
-    print_debug = simple_print # function for printing debug information (reassigned in core)
 
     def __init__(self):
         'initialize the lp instance'
@@ -41,12 +22,10 @@ class LpInstance(Freezable): # pylint: disable=too-many-public-methods
         self.dims = None
         self.basis_mat_pos = None # 2-tuple
         self.cur_vars_offset = None
-        self.input_effects_offsets = None # None or 2-tuple, row of input constraints / col of accumulated input effects
 
         # internal bookkeeping
         self.obj_cols = [] # columns in the LP with an assigned objective coefficient
         self.names = [] # column names
-        self.bm_indices = None # a list of intArray for each row, assigned on set_reach_vars
 
         self.freeze_attrs()
 
@@ -59,16 +38,17 @@ class LpInstance(Freezable): # pylint: disable=too-many-public-methods
         'create a copy of this lp instance'
 
         rv = LpInstance()
-
         glpk.glp_copy_prob(rv.lp, self.lp, glpk.GLP_ON)
-        rv.names = self.names.copy()
+        
+        rv.set_reach_vars(self.dims, self.basis_mat_pos, self.cur_vars_offset)
 
-        rv.set_reach_vars(self.dims, self.basis_mat_pos, self.cur_vars_offset, self.input_effects_offsets)
+        # copy internal bookkeeping
         rv.obj_cols = self.obj_cols.copy()
+        rv.names = self.names.copy()
 
         return rv
 
-    def set_reach_vars(self, dims, basis_mat_pos, cur_vars_offset, input_effects_offsets):
+    def set_reach_vars(self, dims, basis_mat_pos, cur_vars_offset):
         'set reachability variables'
 
         num_rows = self.get_num_rows()
@@ -77,40 +57,9 @@ class LpInstance(Freezable): # pylint: disable=too-many-public-methods
         assert basis_mat_pos[0] + dims <= num_rows
         assert basis_mat_pos[1] + 2 * dims <= num_cols  # need >= 2*dims for cur_time vars somewhere to the right of BM
 
-        if input_effects_offsets is not None:
-            assert input_effects_offsets[0] + dims <= num_rows
-            assert input_effects_offsets[1] + dims <= num_cols
-
         self.dims = dims
         self.basis_mat_pos = basis_mat_pos
         self.cur_vars_offset = cur_vars_offset #num_cols - dims # right-most variables
-        self.input_effects_offsets = input_effects_offsets
-
-        self._create_bm_indices()
-
-    def _create_bm_indices(self):
-        '''create a cached version the basis matrix indices
-
-        This is done for efficiency instead of creating them each time the basis matrix is changed.
-        '''
-
-        # basis matrix rows are as follows:
-        # 0 BM 0 -I 0 (I? <- if inputs exist)
-
-        self.bm_indices = []
-
-        for row in range(self.dims):
-            cur_row = []
-            
-            for col in range(self.dims):
-                cur_row.append(1 + col + self.basis_mat_pos[1])
-
-            cur_row.append(1 + self.cur_vars_offset + row)
-
-            if self.input_effects_offsets is not None:
-                cur_row.append(1 + row + self.input_effects_offsets[1])
-
-            self.bm_indices.append(SwigArray.as_int_array(cur_row))
 
     def _column_names_str(self, cur_var_print):
         'get the line in __str__ for the column names'
@@ -222,15 +171,11 @@ class LpInstance(Freezable): # pylint: disable=too-many-public-methods
             if row_type == glpk.GLP_FX:
                 val = glpk.glp_get_row_ub(lp, row)
                 rv += " == "
-            elif row_type == glpk.GLP_UP:
+            else:
+                assert row_type == glpk.GLP_UP
+                
                 val = glpk.glp_get_row_ub(lp, row)
                 rv += " <= "
-            elif row_type == glpk.GLP_LO:
-                val = glpk.glp_get_row_lb(lp, row)
-                rv += " >= "
-            else:
-                rv += " <?> (unknown bounds)"
-                val = '?'
 
             num = str(val)
             if len(num) < 6:
@@ -288,53 +233,29 @@ class LpInstance(Freezable): # pylint: disable=too-many-public-methods
           input_print("Input Effects Offset") + "\n"
 
         return rv
-    
-    def add_cols(self, names):
-        'add a certain number of columns to the LP'
 
-        assert isinstance(names, list)
-        num_vars = len(names)
+    def get_num_rows(self):
+        'get the number of rows in the lp'
 
-        if num_vars > 0:
-            num_cols = self.get_num_cols()
+        return glpk.glp_get_num_rows(self.lp)
 
-            self.names += names
-            glpk.glp_add_cols(self.lp, num_vars)
+    def get_num_cols(self):
+        'get the number of columns in the lp'
 
-            for i in range(num_vars):
-                glpk.glp_set_col_bnds(self.lp, num_cols + i + 1, glpk.GLP_FR, 0, 0)  # free variable (-inf, inf)
+        #return glpk.glp_get_num_cols(self.lp)
+        return len(self.names) # probably faster than making a call to glpk
 
-    def add_rows_with_types(self, types, rhs_vec):
-        '''add rows to the LP with the given types
+    def add_rows_equal_zero(self, num):
+        '''add rows to the LP with == 0 constraints'''
 
-        types is a vector of types: swiglpk.GLP_FX, swiglpk.GLP_UP, or swiglpk.GLP_LO
-        rhs_vector is the right-hand-side values of the constriants
-        '''
-
-        assert len(types) == len(rhs_vec)
-
-        if isinstance(rhs_vec, list):
-            rhs_vec = np.array(rhs_vec, dtype=float)
-
-        assert isinstance(rhs_vec, np.ndarray) and len(rhs_vec.shape) == 1, "expected 1-d right-hand-side vector"
-
-        if rhs_vec.shape[0] > 0:
+        if num > 0:
             num_rows = glpk.glp_get_num_rows(self.lp)
 
             # create new row for each constraint
-            glpk.glp_add_rows(self.lp, len(rhs_vec))
-            
-            for i, pair in enumerate(zip(rhs_vec, types)):
-                rhs, ty = pair
+            glpk.glp_add_rows(self.lp, num)
 
-                if ty == glpk.GLP_UP:
-                    glpk.glp_set_row_bnds(self.lp, num_rows + i + 1, glpk.GLP_UP, 0, rhs)  # '<=' constraint
-                elif ty == glpk.GLP_LO:
-                    glpk.glp_set_row_bnds(self.lp, num_rows + i + 1, glpk.GLP_LO, rhs, 0)  # '>=' constraint
-                else:
-                    assert ty == glpk.GLP_FX
-
-                    glpk.glp_set_row_bnds(self.lp, num_rows + i + 1, glpk.GLP_FX, rhs, rhs)  # '>=' constraint
+            for i in range(num):
+                glpk.glp_set_row_bnds(self.lp, num_rows + i + 1, glpk.GLP_FX, 0, 0)  # '== 0' constraints
 
     def add_rows_less_equal(self, rhs_vec):
         '''add rows to the LP with <= constraints
@@ -356,25 +277,26 @@ class LpInstance(Freezable): # pylint: disable=too-many-public-methods
             for i, rhs in enumerate(rhs_vec):
                 glpk.glp_set_row_bnds(self.lp, num_rows + i + 1, glpk.GLP_UP, 0, rhs)  # '<=' constraint
 
-    def add_rows_equal_zero(self, num):
-        '''add rows to the LP with == 0 constraints'''
+    def add_cols(self, names):
+        'add a certain number of columns to the LP'
 
-        if num > 0:
-            num_rows = glpk.glp_get_num_rows(self.lp)
+        assert isinstance(names, list)
+        num_vars = len(names)
 
-            # create new row for each constraint
-            glpk.glp_add_rows(self.lp, num)
+        if num_vars > 0:
+            num_cols = self.get_num_cols()
 
-            for i in range(num):
-                glpk.glp_set_row_bnds(self.lp, num_rows + i + 1, glpk.GLP_FX, 0, 0)  # '== 0' constraints
+            self.names += names
+            glpk.glp_add_cols(self.lp, num_vars)
+
+            for i in range(num_vars):
+                glpk.glp_set_col_bnds(self.lp, num_cols + i + 1, glpk.GLP_FR, 0, 0)  # free variable (-inf, inf)
 
     def set_constraints_csr(self, csr_mat, offset=None):
         '''set the constrains row by row to be equal to the passed-in csr matrix
 
         offset is an optional tuple (num_rows, num_cols) which tells you the top-left offset for the assignment
         '''
-
-        Timers.tic('set_constraints_csr')
 
         assert isinstance(csr_mat, csr_matrix)
         assert csr_mat.dtype == float
@@ -411,72 +333,6 @@ class LpInstance(Freezable): # pylint: disable=too-many-public-methods
 
             glpk.glp_set_mat_row(self.lp, offset[0] + row + 1, count, indices_vec, data_vec)
 
-        Timers.toc('set_constraints_csr')
-
-    def set_constraints_swigvec_rows(self, data_vec_list, indices_vec_list, count_list, row_offset):
-        '''An optimized / lower level way to set row constraints compared with set_constraints_csr
-
-        The passed in fields are a list of swig data vector and indices vectors (one for each row), as
-        well as a row offset.
-        '''
-
-        Timers.tic('set_constraints_swigvec_rows')
-
-        for row, (data, indices, count) in enumerate(zip(data_vec_list, indices_vec_list, count_list)):
-            glpk.glp_set_mat_row(self.lp, 1 + row_offset + row, count, indices, data)
-
-        Timers.toc('set_constraints_swigvec_rows')
-
-    def set_constraints_csc(self, csc_mat, offset=None):
-        '''set the constrains column by column to be equal to the passed-in csc matrix
-
-        offset is an optional tuple (num_rows, num_cols) which tells you the top-left offset for the assignment
-        '''
-
-        Timers.tic('set_constraints_csc')
-
-        assert isinstance(csc_mat, csc_matrix)
-        assert csc_mat.dtype == float
-
-        if offset is None:
-            offset = (0, 0)
-
-        assert len(offset) == 2, "offset should be a 2-tuple (num_rows, num_cols)"
-
-        # check that the matrix is in bounds
-        lp_rows = self.get_num_rows()
-        lp_cols = self.get_num_cols()
-
-        if offset[0] < 0 or offset[1] < 0 or \
-                            offset[0] + csc_mat.shape[0] > lp_rows or offset[1] + csc_mat.shape[1] > lp_cols:
-            raise RuntimeError(("Error: set constraints matrix out of bounds (offset was " + \
-                "{}, matrix size was {}), but lp size was ({}, {})").format(
-                    offset, csc_mat.shape, lp_rows, lp_cols))
-
-        # actually set the constraints col by col
-        indptr = csc_mat.indptr
-        indices = csc_mat.indices
-        data_list = csc_mat.data.tolist()
-
-        for col in range(csc_mat.shape[1]):
-            # we must copy the indices since glpk is offset by 1 :(
-            count = int(indptr[col + 1] - indptr[col])
-
-            indices_list = [1 + offset[0] + int(indices[index]) for index in range(indptr[col], indptr[col+1])]
-            indices_vec = SwigArray.as_int_array(indices_list)
-
-            data_row_list = data_list[indptr[col]:indptr[col+1]]
-            data_vec = SwigArray.as_double_array(data_row_list)
-
-            glpk.glp_set_mat_col(self.lp, offset[1] + col + 1, count, indices_vec, data_vec)
-
-        Timers.toc('set_constraints_csc')
-
-    def reset_lp(self):
-        'reset all the column and row statuses of the LP'
-
-        glpk.glp_std_basis(self.lp)
-
     def is_feasible(self):
         '''check if the lp is feasible
         '''
@@ -488,8 +344,6 @@ class LpInstance(Freezable): # pylint: disable=too-many-public-methods
 
         if offset is None, will use cur_vars_offset (direction is in terms of current-time variables)
         '''
-
-        Timers.tic("set_minimize_direction")
 
         if offset is None:
             offset = self.cur_vars_offset
@@ -535,8 +389,6 @@ class LpInstance(Freezable): # pylint: disable=too-many-public-methods
                 self.obj_cols.append(col)
                 glpk.glp_set_obj_coef(self.lp, col, float(direction))
 
-        Timers.toc("set_minimize_direction")
-
     def minimize(self, direction_vec=None, columns=None, fail_on_unsat=True):
         '''minimize the lp, returning a list of assigments to each of the variables
 
@@ -548,8 +400,6 @@ class LpInstance(Freezable): # pylint: disable=too-many-public-methods
         returns None if UNSAT, otherwise the optimization result. Use columns=[] if you're not interested in the result
         '''
 
-        Timers.tic('minimize')
-
         if direction_vec is not None:
             self.set_minimize_direction(direction_vec)
 
@@ -560,39 +410,19 @@ class LpInstance(Freezable): # pylint: disable=too-many-public-methods
         params.msg_lev = glpk.GLP_MSG_OFF
         params.tm_lim = 1000 # 1000 ms time limit
 
-        Timers.tic('glp_simplex')
         simplex_res = glpk.glp_simplex(self.lp, params)
-        Timers.toc('glp_simplex')
-
-        if simplex_res != 0:
-            # this can happen when you replace constraints after already solving once
-            LpInstance.print_normal('Note: glp_simplex() failed ({}: {}), resetting and retrying'.format(
-                simplex_res, LpInstance.get_simplex_error_string(simplex_res)))
-
-            if simplex_res == glpk.GLP_ESING: # singular matrix, can happen after replacing constraints
-                glpk.glp_std_basis(self.lp)
-                simplex_res = glpk.glp_simplex(self.lp, params)
-
-            if simplex_res != 0:
-                glpk.glp_cpx_basis(self.lp) # resets the initial basis
-                params.msg_lev = glpk.GLP_MSG_ON # turn printing on
-                params.tm_lim = 30 * 1000 # second try: 30 second time limit
-                simplex_res = glpk.glp_simplex(self.lp, params)
 
         # process simplex result
         rv = self._process_simplex_result(simplex_res, columns)
 
-        Timers.toc('minimize')
-
         if rv is None and fail_on_unsat:
-            LpInstance.print_normal("Note: minimize failed with fail_on_unsat was true, resetting and retrying...")
+            #LpInstance.print_normal("Note: minimize failed with fail_on_unsat was true, resetting and retrying...")
                         
             glpk.glp_cpx_basis(self.lp) # resets the initial basis
 
             rv = self.minimize(direction_vec, columns, False)
 
-            if rv is not None:
-                LpInstance.print_verbose("Note: LP was infeasible, but then feasible after resetting statuses")
+            #LpInstance.print_verbose("Note: LP was infeasible, but then feasible after resetting statuses")
 
         if rv is None and fail_on_unsat:
             raise UnsatError("minimize returned UNSAT and fail_on_unsafe was True")
@@ -715,184 +545,6 @@ class LpInstance(Freezable): # pylint: disable=too-many-public-methods
 
         return rv
 
-    def set_constraint_rhs(self, row_index, rhs):
-        '''change an existing constraint's right hand side'''
-
-        rows = glpk.glp_get_num_rows(self.lp)
-
-        assert 0 <= row_index < rows, "Invalid row ({}) in set_constraint_rhs() (lp has {})".format(
-            row_index, rows)
-
-        row_type = glpk.glp_get_row_type(self.lp, row_index + 1)
-
-        if row_type == glpk.GLP_UP:
-            glpk.glp_set_row_bnds(self.lp, row_index + 1, glpk.GLP_UP, 0, rhs)
-        elif row_type == glpk.GLP_LO:
-            glpk.glp_set_row_bnds(self.lp, row_index + 1, glpk.GLP_LO, rhs, 0)
-        elif row_type == glpk.GLP_FX:
-            glpk.glp_set_row_bnds(self.lp, row_index + 1, glpk.GLP_FX, rhs, rhs)
-        else:
-            raise RuntimeError("Invalid constraint type {} in row {} in set_constraint_rhs()".format(
-                row_type, row_index))
-
-    def write_lp_glpk(self, filename):
-        '''write the lp in GLPK format'''
-
-        if glpk.glp_write_prob(self.lp, 0, filename) != 0:
-            raise RuntimeError('Error saving GLPK-format LP to {}'.format(filename))
-
-    def write_lp_cplex(self, filename):
-        '''write the lp in CPLEX format'''
-
-        if glpk.glp_write_lp(self.lp, None, filename) != 0:
-            raise RuntimeError('Error saving CLPEX-format LP to {}'.format(filename))
-
-    def get_types(self):
-        '''get the constraint types. These are swiglpk.GLP_FX, swiglpk.GLP_UP, or swiglpk.GLP_LO'''
-
-        lp_rows = glpk.glp_get_num_rows(self.lp)
-        rv = []
-
-        for row in range(lp_rows):
-            rv.append(glpk.glp_get_row_type(self.lp, row + 1))
-
-        return rv
-
-    def get_dense_constraints(self, x, y, w, h):
-        'get a subconstraint matrix from the lpi as a dense matrix'
-
-        rv = np.zeros((h, w))
-
-        lp_rows = self.get_num_rows()
-        lp_cols = self.get_num_cols()
-
-        assert x >= 0 and w >= 0 and x + w <= lp_cols, "invalid x range requested"
-        assert y >= 0 and h >= 0 and y + h <= lp_rows, "invalid y range requested"
-
-        inds_row = glpk.intArray(lp_cols + 1)
-        vals_row = glpk.doubleArray(lp_cols + 1)
-
-        for row in range(y + 1, y + h + 1):
-            row_offset = row - (y + 1)
-            got_len = glpk.glp_get_mat_row(self.lp, row, inds_row, vals_row)
-
-            for i in range(1, got_len+1):
-                if inds_row[i] > x and inds_row[i] <= x + w:
-                    col_offset = inds_row[i] - (x + 1)
-                    rv[row_offset, col_offset] = vals_row[i]
-                    
-        return rv
-
-    def get_names(self):
-        '''get the symbolic names of each column'''
-
-        return self.names
-
-    def get_rhs(self, row_indices=None):
-        '''get the rhs vector of the constraints
-
-        row_indices - a list of requested indices (None=all)
-
-        this returns an np.array of rhs values for the requested indices
-        '''
-
-        rv = []
-
-        if row_indices is None:
-            lp_rows = glpk.glp_get_num_rows(self.lp)
-            row_indices = range(lp_rows)
-
-        for row in row_indices:
-            row_type = glpk.glp_get_row_type(self.lp, row + 1)
-
-            if row_type in [glpk.GLP_FX, glpk.GLP_UP]:
-                limit = glpk.glp_get_row_ub(self.lp, row + 1)
-            elif row_type == glpk.GLP_LO:
-                limit = glpk.glp_get_row_ub(self.lp, row + 1)
-            else:
-                raise RuntimeError("Error: Unsupported type ({}) in getRhs() in row {}".format(row_type, row))
-
-            rv.append(limit)
-
-        return np.array(rv, dtype=float)
-
-    def get_full_constraints(self):
-        '''get the LP matrix as a csr_matrix
-        '''
-
-        lp_rows = self.get_num_rows()
-        lp_cols = self.get_num_cols()
-        nnz = glpk.glp_get_num_nz(self.lp)
-
-        data = np.zeros((nnz,), dtype=float)
-        inds = np.zeros((nnz,), dtype=np.int32)
-        indptr = np.zeros((lp_rows+1,), dtype=np.int32)
-
-        inds_row = glpk.intArray(lp_cols + 1)
-        vals_row = glpk.doubleArray(lp_cols + 1)
-        data_index = 0
-        indptr[0] = 0
-
-        for row in range(1, lp_rows + 1):
-            got_len = glpk.glp_get_mat_row(self.lp, row, inds_row, vals_row)
-
-            for i in range(1, got_len + 1):
-                data[data_index] = vals_row[i]
-                inds[data_index] = inds_row[i] - 1
-                data_index += 1
-
-            indptr[row] = data_index
-
-        csr_mat = csr_matrix((data, inds, indptr), shape=(lp_rows, lp_cols), dtype=float)
-        csr_mat.check_format()
-
-        return csr_mat
-
-    def get_row(self, row):
-        '''get a row of the LP matrix as a csr_matrix
-        '''
-
-        lp_rows = self.get_num_rows()
-        lp_cols = self.get_num_cols()
-
-        assert 0 <= row < lp_rows
-
-        inds_row = glpk.intArray(lp_cols + 1)
-        vals_row = glpk.doubleArray(lp_cols + 1)
-
-        got_len = glpk.glp_get_mat_row(self.lp, row+1, inds_row, vals_row)
-
-        data = np.zeros((got_len,), dtype=float)
-        inds = np.zeros((got_len,), dtype=np.int32)
-        data_index = 0
-
-        for i in range(1, got_len + 1):
-            data[data_index] = vals_row[i]
-            inds[data_index] = inds_row[i] - 1
-            data_index += 1
-
-        indptr = [0, data_index]
-        csr_mat = csr_matrix((data, inds, indptr), shape=(1, lp_cols), dtype=float)
-        csr_mat.check_format()
-
-        return csr_mat
-
-    def get_num_rows(self):
-        'get the number of rows in the lp'
-
-        return glpk.glp_get_num_rows(self.lp)
-
-    def get_num_cols(self):
-        'get the number of columns in the lp'
-
-        #return glpk.glp_get_num_cols(self.lp)
-        return len(self.names) # probably faster than making a call to glpk
-
-    def get_iterations(self):
-        'get the number of LP iterations performed so far'
-
-        return glpk.glp_get_it_cnt(self.lp)
-
 class UnsatError(RuntimeError):
     'raised if an LP is infeasible'
 
@@ -901,6 +553,8 @@ class SwigArray():
     see: https://github.com/biosustain/swiglpk/issues/31 )
     '''
 
+    WARN_MEMORY_SWIGLPK_LEAK_GB = 4.0
+    ERROR_MEMORY_SWIGLPK_LEAK_GB = 8.0
     bytes_allocated = 0
 
     @classmethod
@@ -923,16 +577,24 @@ class SwigArray():
     def _allocated(cls, num_bytes):
         'track how many bytes were allocated and print warning if threshold is exceeded'
 
-        gb_allowed = StaticSettings.MAX_MEMORY_SWIGLPK_LEAK_GB
-        mb = 1024 * 1024
-        threshold = 1024 * mb * gb_allowed # gb
-
         cls.bytes_allocated += num_bytes
+
+        gb_warn = SwigArray.WARN_MEMORY_SWIGLPK_LEAK_GB
+        warn_threshold = 1024**3 * gb_warn
+
+        gb_error = SwigArray.ERROR_MEMORY_SWIGLPK_LEAK_GB
+        error_threshold = 1024**3 * gb_error
 
         #print("Allocated: {} / {} ({:.2f}%)".format(
         #    cls.bytes_allocated, threshold, 100 * cls.bytes_allocated / threshold))
 
-        if cls.bytes_allocated > threshold:
-            raise MemoryError(("Swig array allocation leaked more than {} GB memory. This limit can be raised by " + \
-                "increasing lpinstance.StaticSettings.MAX_MEMORY_SWIGLPK_LEAK_GB. For info on the leak, see: " + \
-                  "https://github.com/biosustain/swiglpk/issues/31").format(gb_allowed))
+        if cls.bytes_allocated > warn_threshold:
+            print(f"Swig array allocation leaked more than {gb_warn} GB memory. Warning limit can be raised by " + \
+                "increasing lpinstance.SwigArray.WARN_MEMORY_SWIGLPK_LEAK_GB. For info on the leak, see: " + \
+                  "https://github.com/biosustain/swiglpk/issues/31")
+
+        if cls.bytes_allocated > error_threshold:
+            raise MemoryError(
+                f"Swig array allocation leaked more than {gb_error} GB memory. Error limit can be raised by " + \
+                "increasing lpinstance.SwigArray.ERROR_MEMORY_SWIGLPK_LEAK_GB. For info on the leak, see: " + \
+                  "https://github.com/biosustain/swiglpk/issues/31")

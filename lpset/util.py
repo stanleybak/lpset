@@ -4,6 +4,21 @@ Utilities for testing
 Stanley Bak, 2018
 '''
 
+class Freezable():
+    'a class where you can freeze the fields (prevent new fields from being created)'
+
+    _frozen = False
+
+    def freeze_attrs(self):
+        'prevents any new attributes from being created in the object'
+        self._frozen = True
+
+    def __setattr__(self, key, value):
+        if self._frozen and not hasattr(self, key):
+            raise TypeError("{} does not contain attribute '{}' (object was frozen)".format(self, key))
+
+        object.__setattr__(self, key, value)
+
 def pair_almost_in(pair, pair_list, tol=1e-9):
     'check if a pair is in a pair list (up to small tolerance)'
 
