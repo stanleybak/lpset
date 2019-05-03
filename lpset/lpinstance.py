@@ -4,6 +4,8 @@ May 2018
 GLPK python interface using swiglpk
 '''
 
+from termcolor import colored
+
 import swiglpk as glpk
 from util import Freezable
 
@@ -138,7 +140,7 @@ class LpInstance(Freezable):
         vals = glpk.doubleArray(cols + 1)
 
         for row in range(1, rows + 1):
-            rv += "{:2}: {} ".format(row-1, stat_labels[glpk.glp_get_row_stat(lp, row)])
+            rv += "{:2}: {} ".format(row, stat_labels[glpk.glp_get_row_stat(lp, row)])
 
             num_inds = glpk.glp_get_mat_row(lp, row, inds, vals)
 
@@ -159,10 +161,6 @@ class LpInstance(Freezable):
                 if self.basis_mat_pos[0] <= row - 1 < self.basis_mat_pos[0] + self.dims and \
                         self.basis_mat_pos[1] <= col - 1 < self.basis_mat_pos[1] + self.dims:
                     rv += bm_print(num) + " "
-                elif self.input_effects_offsets is not None and \
-                        self.input_effects_offsets[0] <= row - 1 < self.input_effects_offsets[0] + self.dims and \
-                        self.input_effects_offsets[1] <= col - 1 < self.input_effects_offsets[1] + self.dims:
-                    rv += input_print(num) + " "
                 else:
                     rv += (zero_print(num) if val == 0 else num) + " "
 
@@ -229,8 +227,7 @@ class LpInstance(Freezable):
 
         rv += self._constraints_str(bm_print, input_print, zero_print)
         
-        rv += "Key: " + bm_print("Basis Matrix") + " " + cur_var_print("Cur Vars") + " " + \
-          input_print("Input Effects Offset") + "\n"
+        rv += "Key: " + bm_print("Basis Matrix") + " " + cur_var_print("Cur Vars") + "\n"
 
         return rv
 
@@ -416,7 +413,7 @@ class LpInstance(Freezable):
         rv = self._process_simplex_result(simplex_res, columns)
 
         if rv is None and fail_on_unsat:
-            #LpInstance.print_normal("Note: minimize failed with fail_on_unsat was true, resetting and retrying...")
+            print("Note: minimize failed with fail_on_unsat was true, resetting and retrying...")
                         
             glpk.glp_cpx_basis(self.lp) # resets the initial basis
 

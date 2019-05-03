@@ -31,6 +31,61 @@ def pt_to_plot_xy(pt, xdim=0, ydim=1, cur_time=0.0):
 
     return x, y
 
+def get_verts3d(lpi, xdim=0, ydim=1, zdim=2, divider=10):
+    '''
+    get an approximation of the vertices of the 3d projection of the lpi
+
+    divider is used to control the number of samples, larger will be more accurate but take longer
+
+    generally, the number of samples will be 4*(divider+2)*(divider+1), so divider=5 is 168 samples, 10 is 528 samples
+    '''
+
+    rv = []
+    vecs = []
+
+    for div1 in range(0, divider + 1):
+        x = math.sqrt(div1 / divider)
+        
+        for div2 in range(div1, divider + 1):
+            y = math.sqrt((div2 - div1) / divider)
+            z = math.sqrt((divider - div2) / divider)
+
+            # (x, y, z) is now a point in the positive quadrant of a sphere (x^2 +  y^2 + z^2 = 1)
+            
+            # there are eight quadrants to sample with this angle
+            for ux in [x, -x]:
+                for uy in [y, -y]:
+                    for uz in [z, -z]:
+                        vecs.append([ux, uy, uz])
+
+    # at this point, vecs contains all the vectors to sample
+    print(f"number of vectors to sample: {len(vecs)}")
+
+    for vec in vecs:
+        d = np.zeros((lpi.dims,), dtype=float)
+        d[xdim] = vec[0]
+        d[ydim] = vec[1]
+        d[zdim] = vec[2]
+
+        lpi.set_minimize_direction(d)
+        res = lpi.minimize(columns=[lpi.cur_vars_offset + n for n in range(lpi.dims)])
+        pt = [res[xdim], res[ydim], res[zdim]]
+
+        # insert pt into rv if it doesn't exist already (avoid duplicates)
+        found = False
+
+        for rv_pt in rv:
+            if np.allclose(rv_pt, pt):
+                found = True
+                break
+
+        if not found:
+            rv.append(pt)
+
+    print(f"verts3d returning {len(rv)} unique vertices")
+
+    return np.array(rv, dtype=float)
+
 def get_verts(lpi, xdim=0, ydim=1, plot_vecs=None, cur_time=0.0):
     '''get the vertices defining (an underapproximation) of the outside of the given linear constraints
     These will be usable for plotting, so that rv[0] == rv[-1]. A single point may be returned if the constraints

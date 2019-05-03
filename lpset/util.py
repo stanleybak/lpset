@@ -4,6 +4,8 @@ Utilities for testing
 Stanley Bak, 2018
 '''
 
+import numpy as np
+
 class Freezable():
     'a class where you can freeze the fields (prevent new fields from being created)'
 
@@ -19,13 +21,13 @@ class Freezable():
 
         object.__setattr__(self, key, value)
 
-def pair_almost_in(pair, pair_list, tol=1e-9):
-    'check if a pair is in a pair list (up to small tolerance)'
+def pt_almost_in(pt, pt_list, tol=1e-9):
+    'check if a pt is in a pt list (up to small tolerance)'
 
     rv = False
 
-    for a, b in pair_list:
-        if abs(a - pair[0]) < tol and abs(b - pair[1]) < tol:
+    for existing_pt in pt_list:
+        if np.allclose(existing_pt, pt, atol=tol):
             rv = True
             break
 
@@ -35,10 +37,10 @@ def assert_verts_equals(verts, check_list, tol=1e-5):
     '''check that the two lists of vertices are the same'''
 
     for v in check_list:
-        assert pair_almost_in(v, verts, tol), "{} was not found in verts: {}".format(v, verts)
+        assert pt_almost_in(v, verts, tol), "{} was not found in verts: {}".format(v, verts)
 
     for v in verts:
-        assert pair_almost_in(v, check_list, tol), "verts contains {}, which was not in check_list: {}".format(
+        assert pt_almost_in(v, check_list, tol), "verts contains {}, which was not in check_list: {}".format(
             v, check_list)
 
 def assert_verts_is_box(verts, box, tol=1e-5):
