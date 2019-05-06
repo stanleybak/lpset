@@ -4,10 +4,13 @@ Lpset implementation
 Stanley Bak
 '''
 
-from scipy.sparse import csr_matrix
+from scipy.sparse import csr_matrix, csc_matrix
+import scipy as sp
 import numpy as np
 
 import matplotlib.pyplot as plt
+
+import swiglpk as glpk
 
 from lpinstance import LpInstance
 import lpplot
@@ -25,7 +28,7 @@ class LpSet(Freezable):
     # override if more or less accuracy is desired for plotting
     plot_vecs = lpplot.make_plot_vecs(num_angles=1024, offset=0.1)
 
-    def __init__(self, csr, rhs, a_mat=None):
+    def __init__(self, csr, rhs, a_mat=None, types=None, names=None, dims=None):
 
         if not isinstance(csr, csr_matrix):
             csr = csr_matrix(csr, dtype=float)
@@ -36,17 +39,20 @@ class LpSet(Freezable):
         self.csr = csr
         self.rhs = rhs
 
+        if dims is None:
+            dims = self.csr.shape[1]
+               
         if a_mat is not None:
             if not isinstance(rhs, np.ndarray):
                 a_mat = np.array(a_mat, dtype=float)
 
-            assert csr.shape[1] == a_mat.shape[1], f"csr.shape = {csr.shape}, a_mat.shape = {a_mat.shape}"
+            assert dims == a_mat.shape[1], f"dims = {dims}, a_mat.shape = {a_mat.shape}"
 
             self.a_mat = a_mat
-        else:
-            self.a_mat = np.identity(self.csr.shape[1], dtype=float)
+        else: 
+            self.a_mat = np.identity(dims, dtype=float)
 
-        self.lpi = self.make_lpi()
+        self.lpi = self.make_lpi(types=types, names=names)
 
         self.freeze_attrs()
 
@@ -58,7 +64,7 @@ class LpSet(Freezable):
 
         return LpSet(self.csr.copy(), self.rhs.copy(), self.a_mat.copy())
 
-    def make_lpi(self):
+    def make_lpi(self, types=None, names=None):
         'make the lpinstance from csr and rhs'
 
         dims = self.a_mat.shape[0] # each row in a is a current-time variable
@@ -66,12 +72,19 @@ class LpSet(Freezable):
         lpi = LpInstance()
         lpi.add_rows_equal_zero(dims)
 
-        names = [f"i{var_index}" for var_index in range(self.csr.shape[1])]
+        if not names:
+            names = [f"i{var_index}" for var_index in range(self.csr.shape[1])]
+        else:
+            assert len(names) == self.csr.shape[1]
+
         names += [f"c{var_index}" for var_index in range(dims)]
 
         lpi.add_cols(names)
 
-        lpi.add_rows_less_equal(self.rhs)
+        if types:
+            lpi.add_rows_with_types(types, self.rhs)
+        else:
+            lpi.add_rows_less_equal(self.rhs)
 
         # make constraints as csr_matrix
         data = []
@@ -91,10 +104,10 @@ class LpSet(Freezable):
             indptr.append(len(data))
 
         num_cols = self.csr.shape[1] + dims
-        csr = csr_matrix((data, inds, indptr), shape=(dims, num_cols), dtype=float)
-        csr.check_format()
+        csr_bm = csr_matrix((data, inds, indptr), shape=(dims, num_cols), dtype=float)
+        csr_bm.check_format()
 
-        lpi.set_constraints_csr(csr)
+        lpi.set_constraints_csr(csr_bm)
 
         # add constraints on initial conditions, offset by <dims> rows
         lpi.set_constraints_csr(self.csr, offset=(dims, 0))
@@ -128,23 +141,25 @@ class LpSet(Freezable):
         xs, ys = zip(*verts)
         plt.plot(xs, ys, color)
 
-    def plot3d(self, ax, markercol='ko', edgecol='k-', xdim=0, ydim=1, zdim=2):
+    def plot3d(self, ax, xdim=0, ydim=1, zdim=2):
         "plot a 3d projection of the zonotope onto the given matplotlib axis object (initialized with proj='3d')"
 
         pts = self.verts3d(xdim=xdim, ydim=ydim, zdim=zdim)
 
-        ax.plot(pts.T[0], pts.T[1], pts.T[2], markercol, ms=0.5)
+        ax.plot(pts.T[0], pts.T[1], pts.T[2], 'k', ms=0.7)
 
         lpplot3d.plot_hull(ax, pts)
         
-    def minkowski_difference(other):
+    def minkowski_difference(self, other):
         'perform an in-place minkowski difference'
 
         # algorithm: for every normal direction, optimize that direction in other and move edges inward accordingly
-        pass
+
+        for row in self.csr:
+            row_vec = row.toarray()
+
+            # figure out
         
-
-
 def from_box(dim_interval_list):
     'make a new lpset from a passed-in box'
 
@@ -177,80 +192,322 @@ def from_box(dim_interval_list):
 
     return LpSet(csr, rhs)
 
-def from_zonotope(center, generator_list):
-    'make a new lp instance from the passed in zonotope'
-
-    # use fourier-morwitz elmination to get rid of all the generator variables
+def from_centered_zonotope(generator_list):
+    'make a new lp instance from a zontope center and list of generator'
 
     # generator constraints
-    # -1 + c[0] <= alpha1 <= 1 + c[0]
-    # -1 + c[1] <= alpha2 <= 1 + c[1]
+    # -1 <= alpha1 <= 1
+    # -1 <= alpha2 <= 1
     # ...
 
-    # definition constraints
-    # x0 = c + alpha1 * g1[0] + alpha2 * g2[0] + ...
-    # x1 = c + alpha1 * g1[1] + alpha2 * g2[1] + ...
-    # ...
-
-    # we should be able to solve each of the definition constraints for alpha1, then alpha2, etc.
-
-    # first set of variables are alphas, followed by the real variables
-    ng = len(generator_list)
-    nc = len(center)
-    num_vars = ng + nc
-
-    gen_constraints = [[1.0 if col == row else 0.0 for col in range(num_vars)] for row in range(ng)] 
-
-
-
+    # a_mat is equal to tranpose of the matrix from the generators
     
+    # first set of variables are alphas, followed by the real variables
+    num_generators = len(generator_list)
+    cdims = len(generator_list[0])
 
-    #variables [x1, x2, ..., center_var, alpha1, alpha2, ...]
     mat = []
     rhs = []
 
-    cdims = len(center)
-    dims = cdims + len(generator_list)
-
-    # bounds on center_var (center_var = 1)
-    #mat.append([1 if d == cdims else 0 for d in range(dims)])
-    #rhs.append(1)
-
-    #mat.append([-1 if d == cdims else 0 for d in range(dims)])
-    #rhs.append(-1)
-
     for i, g in enumerate(generator_list):
-        assert len(g) == cdims, "expected each generator to have the same number of dims as the center"
+        assert len(g) == cdims, "expected each generator to have the same number of dims"
         
         # bounds on each alpha (-1 <= alpha <= 1)
-        mat.append([1 if d == cdims + i else 0 for d in range(dims)])
+        mat.append([1 if d == i else 0 for d in range(num_generators)])
         rhs.append(1)
 
-        mat.append([-1 if d == cdims + i else 0 for d in range(dims)])
+        mat.append([-1 if d == i else 0 for d in range(num_generators)])
         rhs.append(1)
 
-    # zonotope generator constraints x = c + alpha1 * g1[0] + alpha2 * g2[0] + ...
-    for dim, c in enumerate(center):
-        row = [0] * dims
+    a_mat = np.array(generator_list, dtype=float).transpose()
 
-        row[dim] = -1
-        #row[cdims] = c
-
-        for gindex, generator in enumerate(generator_list):     
-            row[cdims + gindex] = generator[dim]
-
-        mat.append(row)
-        rhs.append(-c)
-
-        mat.append([-1 * x for x in row])
-        rhs.append(c)
-
-    # project onto the first cdim variables (current time variables)
-
-    # identity matrix with extra columns of zeros
-    a_mat = np.zeros((cdims, dims), dtype=float)
-    
-    for d in range(cdims):
-        a_mat[d, d] = 1.0
+    assert a_mat.shape == (cdims, num_generators)
 
     return LpSet(mat, rhs, a_mat=a_mat)
+
+def contains_point(lpset, pt):
+    '''does the passed-in lpset contain the passed-in point? This will copy the lpinstance, so it's relatively slow'''
+
+    # intersect with the given point
+    # clones and adds constaints x == pt[0], y == pt[1], etc, then check if feasible
+
+    lpi = lpset.lpi.clone()
+
+    assert len(pt) == lpi.dims
+    lpi.add_rows_equal(pt)
+
+    # set constraints
+    mat = sp.sparse.identity(lpi.num_dims, dtype=float, format='csr')
+
+    lpi.set_constraints_csr(mat, offset=lpi.cur_vars_offset)
+
+    return lpi.is_feasible()
+
+def from_chull(set_a, set_b):
+    'construct an lpset from a convex hull of two sets'
+
+    lpi_list = [set_a.lpi, set_b.lpi]
+
+    # base case: exactly two lpis in lpi_list
+    assert len(lpi_list) == 2
+
+    dims = lpi_list[0].dims
+    assert lpi_list[1].dims == dims
+
+    lpi1 = lpi_list[0]
+    csr1 = lpi1.get_full_constraints()
+    rhs1 = lpi1.get_rhs()
+    types1 = lpi1.get_types()
+
+    # csr1 contains L_left A L_right, split it into these three in order to construct L
+    l_left = csr1[:, 0:lpi1.cur_vars_offset]
+    a1 = csr1[:, lpi1.cur_vars_offset:lpi1.cur_vars_offset+dims]
+    l_right = csr1[:, lpi1.cur_vars_offset+dims:]
+
+    l1 = sp.sparse.hstack([l_left, l_right])
+
+    # repeat for lpi2
+    lpi2 = lpi_list[1]
+    csr2 = lpi2.get_full_constraints()
+    rhs2 = lpi2.get_rhs()
+    types2 = lpi2.get_types()
+
+    # csr1 contains L_left A L_right, split it into these three in order to construct L
+    l_left = csr2[:, 0:lpi2.cur_vars_offset]
+    a2 = csr2[:, lpi2.cur_vars_offset:lpi2.cur_vars_offset+dims]
+    l_right = csr2[:, lpi2.cur_vars_offset+dims:]
+    l2 = sp.sparse.hstack([l_left, l_right])
+
+    lpi = LpInstance()
+    #lpi.add_rows_equal_zero(dims)
+
+    types = types1 + types2
+    rhs = [n for n in rhs1] + ([0] * len(rhs2))
+
+    lpi.add_rows_with_types(types, rhs)
+
+    cols = []
+
+    cols += [f"A1_{i}" for i in range(dims)]
+    cols += [f"A2_{i}" for i in range(dims)]
+    cols += [f"L1_{i}" for i in range(l1.shape[1])]
+    cols += [f"L2_{i}" for i in range(l2.shape[1])]
+    cols += ["a"]
+
+    lpi.add_cols(cols)
+
+    # set constraints
+    l2_zero = csr_matrix((a1.shape[0], l2.shape[1])) # the 0 above L2
+    l1_zero = csr_matrix((a2.shape[0], l1.shape[1])) # the 0 below L1
+    a1_zero = csr_matrix((a2.shape[0], a1.shape[1])) # the 0 below A1
+
+    rhs1_vmat = csr_matrix(np.array([[num] for num in rhs1]))
+    rhs2_vmat = csr_matrix(np.array([[num] for num in rhs2]))
+
+    top = csr_matrix(sp.sparse.hstack([a1, a1, l1, l2_zero, rhs1_vmat]))
+    lpi.set_constraints_csr(top)
+
+    bottom = csr_matrix(sp.sparse.hstack([a1_zero, -a2, l1_zero, l2, -rhs2_vmat]))
+    lpi.set_constraints_csr(bottom, offset=(top.shape[0], 0))
+
+    lpi.dims = dims
+    lpi.cur_vars_offset = 0 # left-most variables are current time variables
+
+    # need to essentially take snapshot variables
+    csr = lpi.get_full_constraints()
+    rhs = lpi.get_rhs()
+    types = lpi.get_types()
+
+    # from_constraints assumes left-most variables are current-time variables
+    return LpSet(csr, rhs, types=types, names=cols, dims=lpi.dims)
+
+def from_forced_chull(set_a, set_b, lam=None, slack=0.0):
+    'construct an lpset from a convex hull of two sets, where the lambda is forced to some value'
+
+    lpi_list = [set_a.lpi, set_b.lpi]
+
+    # base case: exactly two lpis in lpi_list
+    assert len(lpi_list) == 2
+
+    dims = lpi_list[0].dims
+    assert lpi_list[1].dims == dims
+
+    lpi1 = lpi_list[0]
+    csr1 = lpi1.get_full_constraints()
+    rhs1 = lpi1.get_rhs()
+    types1 = lpi1.get_types()
+
+    # csr1 contains L_left A L_right, split it into these three in order to construct L
+    l_left = csr1[:, 0:lpi1.cur_vars_offset]
+    a1 = csr1[:, lpi1.cur_vars_offset:lpi1.cur_vars_offset+dims]
+    l_right = csr1[:, lpi1.cur_vars_offset+dims:]
+
+    l1 = sp.sparse.hstack([l_left, l_right])
+
+    # repeat for lpi2
+    lpi2 = lpi_list[1]
+    csr2 = lpi2.get_full_constraints()
+    rhs2 = lpi2.get_rhs()
+    types2 = lpi2.get_types()
+
+    # csr1 contains L_left A L_right, split it into these three in order to construct L
+    l_left = csr2[:, 0:lpi2.cur_vars_offset]
+    a2 = csr2[:, lpi2.cur_vars_offset:lpi2.cur_vars_offset+dims]
+    l_right = csr2[:, lpi2.cur_vars_offset+dims:]
+    l2 = sp.sparse.hstack([l_left, l_right])
+
+    lpi = LpInstance()
+    #lpi.add_rows_equal_zero(dims)
+
+    types = types1 + types2
+
+    # old:
+    rhs = [n for n in rhs1] + ([0] * len(rhs2))
+    #rhs = [0.3 * n for n in rhs1] + ([0] * len(rhs2))
+
+    lpi.add_rows_with_types(types, rhs)
+
+    cols = []
+
+    cols += [f"A1_{i}" for i in range(dims)]
+    cols += [f"A2_{i}" for i in range(dims)]
+    cols += [f"L1_{i}" for i in range(l1.shape[1])]
+    cols += [f"L2_{i}" for i in range(l2.shape[1])]
+    cols += ["a"]
+
+    lpi.add_cols(cols)
+
+    # set constraints
+    l2_zero = csr_matrix((a1.shape[0], l2.shape[1])) # the 0 above L2
+    l1_zero = csr_matrix((a2.shape[0], l1.shape[1])) # the 0 below L1
+    a1_zero = csr_matrix((a2.shape[0], a1.shape[1])) # the 0 below A1
+
+    rhs1_vmat = csr_matrix(np.array([[num] for num in rhs1]))
+    rhs2_vmat = csr_matrix(np.array([[num] for num in rhs2]))
+
+    top = csr_matrix(sp.sparse.hstack([a1, a1, l1, l2_zero, rhs1_vmat]))
+    lpi.set_constraints_csr(top)
+
+    bottom = csr_matrix(sp.sparse.hstack([a1_zero, -a2, l1_zero, l2, -rhs2_vmat]))
+    lpi.set_constraints_csr(bottom, offset=(top.shape[0], 0))
+
+    # add slack variables
+    nrows = lpi.get_num_rows()
+    ncols = lpi.get_num_cols()
+
+    new_col_names = [f"s{i}" for i in range(nrows)]
+    lpi.add_cols(new_col_names)
+
+    cols += new_col_names
+
+    # add rows for slack variable bounds
+    slack_rhs = []
+
+    for _ in range(nrows):
+        slack_rhs.append(slack)
+        slack_rhs.append(0)
+
+    lpi.add_rows_less_equal(slack_rhs)
+
+    # add constraints on slack variables
+    data = []
+    indices = []
+    indptr = [0]
+
+    for sindex in range(nrows):
+        indices.append(sindex)
+        data.append(-1.0)
+
+        indices.append(nrows + 2*sindex)
+        data.append(1.0)
+
+        indices.append(nrows + 2*sindex + 1)
+        data.append(-1.0)
+
+        indptr.append(len(data))
+
+    slack_csc = csc_matrix((data, indices, indptr), shape=(3*nrows, nrows), dtype=float)
+    slack_csc.check_format()
+    
+    lpi.set_constraints_csc(slack_csc, offset=(0, ncols))
+
+    # add lamda constraint
+    if lam is not None:
+        nrows = lpi.get_num_rows()
+        lpi.add_rows_equal([lam])
+        l = [0] * top.shape[1]
+        l[-1] = 1.0
+        mat = csr_matrix(np.array(l, dtype=float))
+        lpi.set_constraints_csr(mat, offset=(nrows, 0))
+
+    # need to essentially take snapshot variables
+    csr = lpi.get_full_constraints()
+    rhs = lpi.get_rhs()
+    types = lpi.get_types()
+
+    # from_constraints assumes left-most variables are current-time variables
+    return LpSet(csr, rhs, types=types, names=cols, dims=set_a.lpi.dims)
+
+def minkowski_sum(lpset_list):
+    '''
+    perform a minkowski sum of the passed-in sets, and return the resultant lpi
+    '''
+
+    lpi_list = [s.lpi for s in lpset_list]
+
+    for lpi in lpi_list:
+        assert lpi.dims == lpi_list[0].dims, "dimension mismatch during minkowski sum"
+
+    dims = lpi_list[0].dims
+
+    csr_list = []
+    combined_rhs = [0] * dims
+    combined_types = [glpk.GLP_FX] * dims
+    combined_names = [f"c{n}" for n in range(dims)]
+
+    total_new_vars = dims
+
+    for i, lpi in enumerate(lpi_list):
+        csr = lpi.get_full_constraints()
+        csr_list.append(csr)
+        combined_rhs += [v for v in lpi.get_rhs()]
+        combined_types += lpi.get_types()
+
+        total_new_vars += csr.shape[1]
+        combined_names += [f"l{i}_{v}" for v in range(csr.shape[1])]
+
+    # create combined_csr constraints
+    data = []
+    indices = []
+    indptr = [0]
+
+    for d in range(dims):
+        data.append(1)
+        indices.append(d)
+        col_offset = dims
+
+        for lpi in lpi_list:
+            data.append(-1)
+            indices.append(col_offset + lpi.cur_vars_offset + d)
+
+            col_offset += lpi.get_num_cols()
+
+        indptr.append(len(data))
+
+    # copy constraints from each lpi
+    col_offset = dims
+    indptr_offset = indptr[-1]
+    
+    for csr in csr_list:
+        data += [d for d in csr.data]
+        indices += [col_offset + i for i in csr.indices]
+        indptr += [indptr_offset + i for i in csr.indptr[1:]]
+
+        col_offset += csr.shape[1]
+        indptr_offset = indptr[-1]
+
+    rows = len(combined_rhs)
+    cols = col_offset
+    combined_csr = csr_matrix((data, indices, indptr), shape=(rows, cols), dtype=float)
+
+    return LpSet(combined_csr, combined_rhs, types=combined_types, names=combined_names, dims=dims)

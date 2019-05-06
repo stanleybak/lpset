@@ -4,13 +4,13 @@ May 2018
 GLPK python interface using swiglpk
 '''
 
+from scipy.sparse import csr_matrix, csc_matrix
+import numpy as np
+
 from termcolor import colored
 
 import swiglpk as glpk
 from util import Freezable
-
-from scipy.sparse import csr_matrix
-import numpy as np
 
 class LpInstance(Freezable):
     'Linear programming wrapper using glpk (through swiglpk python interface)'
@@ -135,12 +135,14 @@ class LpInstance(Freezable):
         rows = self.get_num_rows()
         cols = self.get_num_cols()
         
-        stat_labels = ["?(0)?", "BS", "NL", "NU", "NF", "NS", "?(6)?"]
+        stat_labels = ["?(0)?", "BS", "NL", "NU", "NF", "NS"]
         inds = glpk.intArray(cols + 1)
         vals = glpk.doubleArray(cols + 1)
 
         for row in range(1, rows + 1):
-            rv += "{:2}: {} ".format(row, stat_labels[glpk.glp_get_row_stat(lp, row)])
+            stat = glpk.glp_get_row_stat(lp, row)
+            assert 0 <= stat <= len(stat_labels)
+            rv += "{:2}: {} ".format(row, stat_labels[stat])
 
             num_inds = glpk.glp_get_mat_row(lp, row, inds, vals)
 
@@ -242,8 +244,10 @@ class LpInstance(Freezable):
         #return glpk.glp_get_num_cols(self.lp)
         return len(self.names) # probably faster than making a call to glpk
 
-    def add_rows_equal_zero(self, num):
-        '''add rows to the LP with == 0 constraints'''
+    def add_rows_equal(self, rhs_vec):
+        '''add rows to the LP with == rhs[i] constraints'''
+
+        num = len(rhs_vec)
 
         if num > 0:
             num_rows = glpk.glp_get_num_rows(self.lp)
@@ -251,8 +255,13 @@ class LpInstance(Freezable):
             # create new row for each constraint
             glpk.glp_add_rows(self.lp, num)
 
-            for i in range(num):
-                glpk.glp_set_row_bnds(self.lp, num_rows + i + 1, glpk.GLP_FX, 0, 0)  # '== 0' constraints
+            for i, val in enumerate(rhs_vec):
+                glpk.glp_set_row_bnds(self.lp, num_rows + i + 1, glpk.GLP_FX, val, val)  # '== val' constraints
+
+    def add_rows_equal_zero(self, num):
+        '''add rows to the LP with == 0 constraints'''
+
+        self.add_rows_equal(num * [0])
 
     def add_rows_less_equal(self, rhs_vec):
         '''add rows to the LP with <= constraints
@@ -274,6 +283,49 @@ class LpInstance(Freezable):
             for i, rhs in enumerate(rhs_vec):
                 glpk.glp_set_row_bnds(self.lp, num_rows + i + 1, glpk.GLP_UP, 0, rhs)  # '<=' constraint
 
+    def get_types(self):
+        '''get the constraint types. These are swiglpk.GLP_FX, swiglpk.GLP_UP, or swiglpk.GLP_LO'''
+
+        lp_rows = glpk.glp_get_num_rows(self.lp)
+        rv = []
+
+        for row in range(lp_rows):
+            rv.append(glpk.glp_get_row_type(self.lp, row + 1))
+
+        return rv
+
+    def add_rows_with_types(self, types, rhs_vec):
+        '''add rows to the LP with the given types
+
+        types is a vector of types: swiglpk.GLP_FX, swiglpk.GLP_UP, or swiglpk.GLP_LO
+        rhs_vector is the right-hand-side values of the constriants
+        '''
+
+        assert len(types) == len(rhs_vec)
+
+        if isinstance(rhs_vec, list):
+            rhs_vec = np.array(rhs_vec, dtype=float)
+
+        assert isinstance(rhs_vec, np.ndarray) and len(rhs_vec.shape) == 1, "expected 1-d right-hand-side vector"
+
+        if rhs_vec.shape[0] > 0:
+            num_rows = glpk.glp_get_num_rows(self.lp)
+
+            # create new row for each constraint
+            glpk.glp_add_rows(self.lp, len(rhs_vec))
+            
+            for i, pair in enumerate(zip(rhs_vec, types)):
+                rhs, ty = pair
+
+                if ty == glpk.GLP_UP:
+                    glpk.glp_set_row_bnds(self.lp, num_rows + i + 1, glpk.GLP_UP, 0, rhs)  # '<=' constraint
+                elif ty == glpk.GLP_LO:
+                    glpk.glp_set_row_bnds(self.lp, num_rows + i + 1, glpk.GLP_LO, rhs, 0)  # '>=' constraint
+                else:
+                    assert ty == glpk.GLP_FX, f"got unknown row type: {ty}"
+
+                    glpk.glp_set_row_bnds(self.lp, num_rows + i + 1, glpk.GLP_FX, rhs, rhs)  # '>=' constraint
+
     def add_cols(self, names):
         'add a certain number of columns to the LP'
 
@@ -288,6 +340,47 @@ class LpInstance(Freezable):
 
             for i in range(num_vars):
                 glpk.glp_set_col_bnds(self.lp, num_cols + i + 1, glpk.GLP_FR, 0, 0)  # free variable (-inf, inf)
+
+    def set_constraints_csc(self, csc_mat, offset=None):
+        '''set the constrains column by column to be equal to the passed-in csc matrix
+
+        offset is an optional tuple (num_rows, num_cols) which tells you the top-left offset for the assignment
+        '''
+
+        assert isinstance(csc_mat, csc_matrix)
+        assert csc_mat.dtype == float
+
+        if offset is None:
+            offset = (0, 0)
+
+        assert len(offset) == 2, "offset should be a 2-tuple (num_rows, num_cols)"
+
+        # check that the matrix is in bounds
+        lp_rows = self.get_num_rows()
+        lp_cols = self.get_num_cols()
+
+        if offset[0] < 0 or offset[1] < 0 or \
+                            offset[0] + csc_mat.shape[0] > lp_rows or offset[1] + csc_mat.shape[1] > lp_cols:
+            raise RuntimeError(("Error: set constraints matrix out of bounds (offset was " + \
+                "{}, matrix size was {}), but lp size was ({}, {})").format(
+                    offset, csc_mat.shape, lp_rows, lp_cols))
+
+        # actually set the constraints col by col
+        indptr = csc_mat.indptr
+        indices = csc_mat.indices
+        data_list = csc_mat.data.tolist()
+
+        for col in range(csc_mat.shape[1]):
+            # we must copy the indices since glpk is offset by 1 :(
+            count = int(indptr[col + 1] - indptr[col])
+
+            indices_list = [1 + offset[0] + int(indices[index]) for index in range(indptr[col], indptr[col+1])]
+            indices_vec = SwigArray.as_int_array(indices_list)
+
+            data_row_list = data_list[indptr[col]:indptr[col+1]]
+            data_vec = SwigArray.as_double_array(data_row_list)
+
+            glpk.glp_set_mat_col(self.lp, offset[1] + col + 1, count, indices_vec, data_vec)
 
     def set_constraints_csr(self, csr_mat, offset=None):
         '''set the constrains row by row to be equal to the passed-in csr matrix
@@ -330,6 +423,91 @@ class LpInstance(Freezable):
 
             glpk.glp_set_mat_row(self.lp, offset[0] + row + 1, count, indices_vec, data_vec)
 
+    def get_dense_constraints(self, x, y, w, h):
+        'get a subconstraint matrix from the lpi as a dense matrix'
+
+        rv = np.zeros((h, w))
+
+        lp_rows = self.get_num_rows()
+        lp_cols = self.get_num_cols()
+
+        assert x >= 0 and w >= 0 and x + w <= lp_cols, "invalid x range requested"
+        assert y >= 0 and h >= 0 and y + h <= lp_rows, "invalid y range requested"
+
+        inds_row = glpk.intArray(lp_cols + 1)
+        vals_row = glpk.doubleArray(lp_cols + 1)
+
+        for row in range(y + 1, y + h + 1):
+            row_offset = row - (y + 1)
+            got_len = glpk.glp_get_mat_row(self.lp, row, inds_row, vals_row)
+
+            for i in range(1, got_len+1):
+                if inds_row[i] > x and inds_row[i] <= x + w:
+                    col_offset = inds_row[i] - (x + 1)
+                    rv[row_offset, col_offset] = vals_row[i]
+                    
+        return rv
+
+    def get_rhs(self, row_indices=None):
+        '''get the rhs vector of the constraints
+
+        row_indices - a list of requested indices (None=all)
+
+        this returns an np.array of rhs values for the requested indices
+        '''
+
+        rv = []
+
+        if row_indices is None:
+            lp_rows = glpk.glp_get_num_rows(self.lp)
+            row_indices = range(lp_rows)
+
+        for row in row_indices:
+            row_type = glpk.glp_get_row_type(self.lp, row + 1)
+
+            if row_type in [glpk.GLP_FX, glpk.GLP_UP]:
+                limit = glpk.glp_get_row_ub(self.lp, row + 1)
+            elif row_type == glpk.GLP_LO:
+                limit = glpk.glp_get_row_ub(self.lp, row + 1)
+            else:
+                raise RuntimeError("Error: Unsupported type ({}) in getRhs() in row {}".format(row_type, row))
+
+            rv.append(limit)
+
+        return np.array(rv, dtype=float)
+
+    def get_full_constraints(self):
+        '''get the LP matrix as a csr_matrix
+        '''
+
+        lp_rows = self.get_num_rows()
+        lp_cols = self.get_num_cols()
+        nnz = glpk.glp_get_num_nz(self.lp)
+
+        data = np.zeros((nnz,), dtype=float)
+        inds = np.zeros((nnz,), dtype=np.int32)
+        indptr = np.zeros((lp_rows+1,), dtype=np.int32)
+
+        inds_row = glpk.intArray(lp_cols + 1)
+        vals_row = glpk.doubleArray(lp_cols + 1)
+        data_index = 0
+        indptr[0] = 0
+
+        for row in range(1, lp_rows + 1):
+            got_len = glpk.glp_get_mat_row(self.lp, row, inds_row, vals_row)
+
+            for i in range(1, got_len + 1):
+                data[data_index] = vals_row[i]
+                inds[data_index] = inds_row[i] - 1
+                data_index += 1
+
+            indptr[row] = data_index
+
+        csr_mat = csr_matrix((data, inds, indptr), shape=(lp_rows, lp_cols), dtype=float)
+        csr_mat.check_format()
+
+        return csr_mat
+
     def is_feasible(self):
         '''check if the lp is feasible
         '''
@@ -350,7 +528,8 @@ class LpInstance(Freezable):
             assert size <= self.dims, "len(direction_vec) ({}) > number of cur_vars({})".format(
                 size, self.dims)
         else:
-            assert direction_vec.shape[1] + offset <= self.get_num_cols()
+            assert len(direction_vec) + offset <= self.get_num_cols(), \
+                  f"col {len(direction_vec) + offset} out of bounds (>= {self.get_num_cols()}"
 
         # set the previous objective columns to zero
         for i in self.obj_cols:
@@ -378,8 +557,7 @@ class LpInstance(Freezable):
             if not isinstance(direction_vec, np.ndarray):
                 direction_vec = np.array(direction_vec, dtype=float)
 
-            assert len(direction_vec.shape) == 1
-            assert len(direction_vec) <= self.dims, "dirLen({}) > dims({})".format(len(direction_vec), self.dims)
+            assert len(direction_vec.shape) == 1, f"dir_vec shape was {direction_vec.shape}"
 
             for i, direction in enumerate(direction_vec):
                 col = int(1 + offset + i)

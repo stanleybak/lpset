@@ -4,6 +4,8 @@ functions for plotting 3d projetions
 
 from scipy.spatial import ConvexHull
 import scipy as sp
+import numpy as np
+
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import matplotlib.colors as colors
 
