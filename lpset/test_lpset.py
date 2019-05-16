@@ -11,7 +11,7 @@ from mpl_toolkits.mplot3d import Axes3D
 
 import swiglpk as glpk
 
-import lpset
+import lpset, lpplot
 from util import assert_verts_is_box, assert_verts_equals
 
 def test_from_box():
@@ -58,7 +58,7 @@ def test_mattias_zonotopes():
     expected = [[-2.0, 0], [-2.0, 1.0], [2.0, 0], [2.0, -1.0]]
     assert_verts_equals(s3.verts(), expected)
 
-def test_3d_zonotope():
+def test_3d_zonotope_plot():
     '3d zonotope'
 
     # zonotope from Figure 6 of "On Computing the Minkowski Difference of Zonotopes" by Matthias Althoff
@@ -67,12 +67,67 @@ def test_3d_zonotope():
 
     #s = lpset.from_zonotope([0, 0, 0], [[-1/3, 1/3, 1/3], [1/3, 0, 0], [0, 1/3, 0], [0, 0, 1/3]])
 
+    verts = m.verts3d()
+    assert len(verts) == 14
+
+    # figure should work
     fig = plt.figure()
     ax = fig.add_subplot(111, projection="3d")
     m.plot3d(ax)
 
-
     plt.show()
+
+    assert False
+
+def test_complement_lps():
+    'test getting the complement lps'
+
+
+    m = lpset.from_centered_zonotope([[1, 1, 1], [1, 0, 0], [0, 1, 0], [0, 0, 1]])
+
+    c = m.get_complement_lpsets()
+
+    assert len(c) == 8
+
+def test_mindiff_2d():
+    'test minkowski difference in 2d'
+
+    # Z_m (shifted due to lack of center in our constructor)
+    m = lpset.from_centered_zonotope([[1, 0], [0, 1], [1, 1]])
+
+    # Z_{s,1}
+    s1 = lpset.from_centered_zonotope([[0.5, -0.25], [0, 0.25]])
+
+    p_in = m.find_point_in_diff(s1)
+
+    print(p_in)
+
+    assert False
+
+def test_mindiff_3d():
+    'test minkowski difference in 3d'
+
+    m = lpset.from_centered_zonotope([[1, 1, 1], [1, 0, 0], [0, 1, 0], [0, 0, 1]])
+    s = lpset.from_centered_zonotope([[-1/3, 1/3, 1/3], [1/3, 0, 0], [0, 1/3, 0], [0, 0, 1/3]])
+
+    p_in = m.find_point_in_diff(s)
+
+    print(p_in)
+
+    assert False
+
+def test_intersection():
+    'test the lpset intersection'
+
+    m = lpset.from_centered_zonotope([[1, 1, 1], [1, 0, 0], [0, 1, 0], [0, 0, 1]])
+    s = lpset.from_centered_zonotope([[-1/3, 1/3, 1/3], [1/3, 0, 0], [0, 1/3, 0], [0, 0, 1/3]])
+
+    inter = lpset.intersection(m, s)
+
+    verts_s = s.verts3d()
+    verts_inter = lpplot.get_verts3d(inter)
+
+    assert_verts_equals(verts_s, verts_inter)
 
 def test_simple_minkowski_difference():
     'test minkowski difference on box sets in 1 and 2d'

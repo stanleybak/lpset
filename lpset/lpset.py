@@ -71,7 +71,7 @@ class LpSet(Freezable):
 
         lpi = LpInstance()
         lpi.add_rows_equal_zero(dims)
-
+        
         if not names:
             names = [f"i{var_index}" for var_index in range(self.csr.shape[1])]
         else:
@@ -113,10 +113,59 @@ class LpSet(Freezable):
         lpi.set_constraints_csr(self.csr, offset=(dims, 0))
 
         cur_vars_offset = self.csr.shape[1]
-        lpi.set_reach_vars(dims, (0, 0), cur_vars_offset)
+        basis_mat_rect = (0, 0, self.csr.shape[1], dims)
+        lpi.set_reach_vars(dims, basis_mat_rect, cur_vars_offset)
 
         return lpi
 
+    def get_complement_lpsets(self):
+        '''
+        get a list of lpi sets, such that their union is the complement of this set
+        '''
+
+        cur_dims = self.a_mat.shape[0]
+        rank = np.linalg.matrix_rank(self.a_mat)
+
+        # a_mat must be full rank for this algorimth to work (otherwise we could extend A, not implemented)
+        assert rank == cur_dims, f"Rank={rank} was not cur_dims={cur_dims}"
+
+        lpsets = []
+
+        for i in range(self.csr.shape[0]):
+            # add constraints 0 to i-1 and negate constraint i
+                    
+            new_csr = sp.sparse.vstack([self.csr[:i, :], -self.csr[i:i+1, :]])
+            new_rhs = np.hstack([self.rhs[:i], -self.rhs[i:i+1]])
+
+            lpsets.append(LpSet(new_csr, new_rhs, self.a_mat))
+
+        return lpsets
+
+    def find_point_in_diff(self, b_lpset):
+        '''find a point the minkowski difference, self - b_set
+
+        this can fail. currently it just tries the origin
+        '''
+
+        c_list = self.get_complement_lpsets()
+
+        # check if b_lpset doesn't intersect any of the lpsets in c
+        origin_ok = True
+        
+        for i, c in enumerate(c_list):
+            lpi = intersection(c, b_lpset)
+
+            pt = lpi.minimize(fail_on_unsat=False)
+
+            if pt is not None:
+                print(f"complement lpi #{i} is feasible at pt {pt}:\n\n{lpi}")
+                origin_ok = False
+                break
+
+        assert origin_ok, "the origin is not in the minkowski difference (more clever strategy unimplemented)"
+
+        return np.zeros((self.a_mat.shape[0],), dtype=float)
+            
     def verts(self, xdim=0, ydim=1):
         '''get (an approximation of) the vertices of a projection of this lpset
 
@@ -447,6 +496,54 @@ def from_forced_chull(set_a, set_b, lam=None, slack=0.0):
 
     # from_constraints assumes left-most variables are current-time variables
     return LpSet(csr, rhs, types=types, names=cols, dims=set_a.lpi.dims)
+
+def intersection(a, b):
+    '''return an lpi that is the minkowski sum of the two passed-in lpsets'''
+
+    lpi = a.lpi.clone()
+    lpi.basis_mat_rect = [0, 0, 0, 0] # no basis mat, since it's not a proper lpset
+
+    nrows = lpi.get_num_rows()
+    ncols = lpi.get_num_cols()
+
+    dims = b.a_mat.shape[0]
+    
+    lpi.add_rows_equal_zero(dims)
+
+    names = [f"b_i{x}" for x in range(b.a_mat.shape[1])]
+    lpi.add_cols(names)
+
+    lpi.add_rows_less_equal(b.rhs)
+
+    # make constraints as csr_matrix
+    data = []
+    inds = []
+    indptr = [0]
+
+    # 0 -I BM for n rows
+    for row_index, row in enumerate(b.a_mat):
+
+        data.append(-1)
+        inds.append(ncols - dims + row_index)
+        
+        for col_index, val in enumerate(row):
+            if val != 0:
+                data.append(val)
+                inds.append(ncols + col_index)
+
+        indptr.append(len(data))
+
+    num_cols = ncols + b.a_mat.shape[1]
+    num_rows = dims
+    csr_bm = csr_matrix((data, inds, indptr), shape=(num_rows, num_cols), dtype=float)
+    csr_bm.check_format()
+
+    lpi.set_constraints_csr(csr_bm, offset=(nrows, 0))
+
+    # add constraints on initial conditions, offset by <dims> rows
+    lpi.set_constraints_csr(b.csr, offset=(nrows + dims, ncols))
+
+    return lpi
 
 def minkowski_sum(lpset_list):
     '''

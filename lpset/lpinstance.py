@@ -22,7 +22,7 @@ class LpInstance(Freezable):
 
         # these are assigned on set_reach_vars()
         self.dims = None
-        self.basis_mat_pos = None # 2-tuple
+        self.basis_mat_rect = None # 4-tuple, x, y, w, h
         self.cur_vars_offset = None
 
         # internal bookkeeping
@@ -41,26 +41,28 @@ class LpInstance(Freezable):
 
         rv = LpInstance()
         glpk.glp_copy_prob(rv.lp, self.lp, glpk.GLP_ON)
-        
-        rv.set_reach_vars(self.dims, self.basis_mat_pos, self.cur_vars_offset)
 
         # copy internal bookkeeping
         rv.obj_cols = self.obj_cols.copy()
         rv.names = self.names.copy()
+        
+        rv.set_reach_vars(self.dims, self.basis_mat_rect, self.cur_vars_offset)
 
         return rv
 
-    def set_reach_vars(self, dims, basis_mat_pos, cur_vars_offset):
+    def set_reach_vars(self, dims, basis_mat_rect, cur_vars_offset):
         'set reachability variables'
 
         num_rows = self.get_num_rows()
         num_cols = self.get_num_cols()
 
-        assert basis_mat_pos[0] + dims <= num_rows
-        assert basis_mat_pos[1] + 2 * dims <= num_cols  # need >= 2*dims for cur_time vars somewhere to the right of BM
+        assert len(basis_mat_rect) == 4
+        assert dims == basis_mat_rect[3]
+        assert basis_mat_rect[1] + dims <= num_rows
+        assert basis_mat_rect[0] + 2 * dims <= num_cols  # need >= 2*dims for cur_time vars somewhere to the right of BM
 
         self.dims = dims
-        self.basis_mat_pos = basis_mat_pos
+        self.basis_mat_rect = basis_mat_rect
         self.cur_vars_offset = cur_vars_offset #num_cols - dims # right-most variables
 
     def _column_names_str(self, cur_var_print):
@@ -160,8 +162,8 @@ class LpInstance(Freezable):
                 else:
                     num = num[0:6]
 
-                if self.basis_mat_pos[0] <= row - 1 < self.basis_mat_pos[0] + self.dims and \
-                        self.basis_mat_pos[1] <= col - 1 < self.basis_mat_pos[1] + self.dims:
+                if self.basis_mat_rect[1] <= row - 1 < self.basis_mat_rect[0] + self.basis_mat_rect[3] and \
+                        self.basis_mat_rect[0] <= col - 1 < self.basis_mat_rect[1] + self.basis_mat_rect[2]:
                     rv += bm_print(num) + " "
                 else:
                     rv += (zero_print(num) if val == 0 else num) + " "
@@ -510,6 +512,8 @@ class LpInstance(Freezable):
 
     def is_feasible(self):
         '''check if the lp is feasible
+
+        returns a feasible point or None
         '''
 
         return self.minimize(columns=[], fail_on_unsat=False) is not None

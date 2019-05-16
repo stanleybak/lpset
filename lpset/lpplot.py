@@ -59,7 +59,6 @@ def get_verts3d(lpi, xdim=0, ydim=1, zdim=2, divider=10):
                         vecs.append([ux, uy, uz])
 
     # at this point, vecs contains all the vectors to sample
-    print(f"number of vectors to sample: {len(vecs)}")
 
     for vec in vecs:
         d = np.zeros((lpi.dims,), dtype=float)
@@ -81,8 +80,6 @@ def get_verts3d(lpi, xdim=0, ydim=1, zdim=2, divider=10):
 
         if not found:
             rv.append(pt)
-
-    print(f"verts3d returning {len(rv)} unique vertices")
 
     return np.array(rv, dtype=float)
 
