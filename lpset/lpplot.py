@@ -10,6 +10,8 @@ make_plot_vecs is useful for controlling the accuracy (and decreasing overhead c
 import math
 import numpy as np
 
+import kamenev
+
 def pt_to_plot_xy(pt, xdim=0, ydim=1, cur_time=0.0):
     '''convert a point to an x/y pair for plotting
     xdim and ydim can be either an integer (dimension number), an np.array (direction), or None (time will be used)
@@ -31,7 +33,7 @@ def pt_to_plot_xy(pt, xdim=0, ydim=1, cur_time=0.0):
 
     return x, y
 
-def get_verts3d(lpi, xdim=0, ydim=1, zdim=2, divider=10):
+def get_verts_nd(lpi, dim_list):
     '''
     get an approximation of the vertices of the 3d projection of the lpi
 
@@ -40,48 +42,30 @@ def get_verts3d(lpi, xdim=0, ydim=1, zdim=2, divider=10):
     generally, the number of samples will be 4*(divider+2)*(divider+1), so divider=5 is 168 samples, 10 is 528 samples
     '''
 
-    rv = []
-    vecs = []
+    # algorithm: Kamenev's method in n-d
 
-    for div1 in range(0, divider + 1):
-        x = math.sqrt(div1 / divider)
-        
-        for div2 in range(div1, divider + 1):
-            y = math.sqrt((div2 - div1) / divider)
-            z = math.sqrt((divider - div2) / divider)
+    def supp_point_nd(vec):
+        'return a supporting point for the given direction (maximize)'
 
-            # (x, y, z) is now a point in the positive quadrant of a sphere (x^2 +  y^2 + z^2 = 1)
-            
-            # there are eight quadrants to sample with this angle
-            for ux in [x, -x]:
-                for uy in [y, -y]:
-                    for uz in [z, -z]:
-                        vecs.append([ux, uy, uz])
+        assert len(vec) == len(dim_list)
 
-    # at this point, vecs contains all the vectors to sample
-
-    for vec in vecs:
         d = np.zeros((lpi.dims,), dtype=float)
-        d[xdim] = vec[0]
-        d[ydim] = vec[1]
-        d[zdim] = vec[2]
+        # negative here because we want to MAXIMIZE not minimize
+
+        for i, dim_index in enumerate(dim_list):
+            d[dim_index] = -vec[i]
 
         lpi.set_minimize_direction(d)
         res = lpi.minimize(columns=[lpi.cur_vars_offset + n for n in range(lpi.dims)])
-        pt = [res[xdim], res[ydim], res[zdim]]
 
-        # insert pt into rv if it doesn't exist already (avoid duplicates)
-        found = False
+        rv = []
 
-        for rv_pt in rv:
-            if np.allclose(rv_pt, pt):
-                found = True
-                break
+        for dim in dim_list:
+            rv.append(res[dim])
+        
+        return np.array(rv, dtype=float)
 
-        if not found:
-            rv.append(pt)
-
-    return np.array(rv, dtype=float)
+    return kamenev.verts(len(dim_list), supp_point_nd)
 
 def get_verts(lpi, xdim=0, ydim=1, plot_vecs=None, cur_time=0.0):
     '''get the vertices defining (an underapproximation) of the outside of the given linear constraints

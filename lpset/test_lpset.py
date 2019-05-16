@@ -4,6 +4,7 @@ Tests for LP operations. Made for use with py.test:
 > python3 -m pytest test_*.py
 '''
 
+import random
 import numpy as np
 
 import matplotlib.pyplot as plt
@@ -11,8 +12,10 @@ from mpl_toolkits.mplot3d import Axes3D
 
 import swiglpk as glpk
 
-import lpset, lpplot
+import lpset
+import lpplot
 from util import assert_verts_is_box, assert_verts_equals
+import kamenev
 
 def test_from_box():
     'tests from_box constructor'
@@ -33,33 +36,55 @@ def test_2d_zonotope():
     expected = [[-1, -2], [-1, 0], [1, 2], [1, 0]]
     assert_verts_equals(m.verts(), expected)
 
-def test_mattias_zonotopes():
+def test_matthias_zonotopes():
     'tests from_centered_zonotope constructor'
 
     # zonotopes from Figure 2 of "On Computing the Minkowski Difference of Zonotopes" by Matthias Althoff
 
     # Z_m (shifted due to lack of center in our constructor)
-    m = lpset.from_centered_zonotope([[1, 0], [0, 1], [1, 1]])
-    expected = [[-2, -2], [-2, 0], [0, 2], [2, 2], [2, 0], [0, -2]]
-    assert_verts_equals(m.verts(), expected)
+    if False:
+        m = lpset.from_centered_zonotope([[1, 0], [0, 1], [1, 1]])
+        expected = [[-2, -2], [-2, 0], [0, 2], [2, 2], [2, 0], [0, -2]]
+        assert_verts_equals(m.verts(), expected)
 
-    # Z_{s,1}
-    s1 = lpset.from_centered_zonotope([[0.5, -0.25], [0, 0.25]])
-    expected = [[-0.5, 0], [-0.5, 0.5], [0.5, 0], [0.5, -0.5]]
-    assert_verts_equals(s1.verts(), expected)
+
+        # Z_{s,1}
+        s1 = lpset.from_centered_zonotope([[0.5, -0.25], [0, 0.25]])
+        expected = [[-0.5, 0], [-0.5, 0.5], [0.5, 0], [0.5, -0.5]]
+        assert_verts_equals(s1.verts(), expected)
 
     # Z_{s,2}
     s2 = lpset.from_centered_zonotope([[0.5, -0.5], [0, 0.5]])
+
+    s2.plot()
+    plt.show()
+    
     expected = [[-0.5, 0], [-0.5, 1.0], [0.5, 0], [0.5, -1.0]]
     assert_verts_equals(s2.verts(), expected)
 
-    # Z_{s,3}
-    s3 = lpset.from_centered_zonotope([[2.0, -0.5], [0, 0.5]])
-    expected = [[-2.0, 0], [-2.0, 1.0], [2.0, 0], [2.0, -1.0]]
-    assert_verts_equals(s3.verts(), expected)
+    if False:
+        # Z_{s,3}
+        s3 = lpset.from_centered_zonotope([[2.0, -0.5], [0, 0.5]])
+        expected = [[-2.0, 0], [-2.0, 1.0], [2.0, 0], [2.0, -1.0]]
+        assert_verts_equals(s3.verts(), expected)
+
+def test_3d_box_plot():
+    'test verts3d on unit box'
+
+    m = lpset.from_box([[0, 1], [0, 1], [0, 1]])
+    
+    verts = m.verts3d()
+    assert len(verts) == 8
+
+    # figure should work
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection="3d")
+    m.plot3d(ax)
+
+    #plt.show()
 
 def test_3d_zonotope_plot():
-    '3d zonotope'
+    'test verts3d on zonotope'
 
     # zonotope from Figure 6 of "On Computing the Minkowski Difference of Zonotopes" by Matthias Althoff
 
@@ -184,7 +209,6 @@ def test_chull_hard():
     # s = s1
     s = s2
 
-
     #combined = lpset.minkowski_sum([m, s1])
     combined = lpset.minkowski_sum([m, s])
 
@@ -245,3 +269,85 @@ def test_minkowski_difference():
     z_d1.plot('--')
 
     plt.show()
+
+def test_hyperplane2d():
+    'test constructing the normal of the hyperplane through some points'
+
+    pts = [[1, 1], [2, 1]]
+
+    normal, rhs = kamenev.hyperplane(pts, [0, 0])
+    
+    # result: y = 1
+    assert np.allclose(normal, [0, 1])
+    assert np.allclose(1, [rhs])
+
+    normal, rhs = kamenev.hyperplane(pts, [0, 3])
+    
+    # result: -y = -1
+    assert np.allclose(normal, [0, -1])
+    assert np.allclose(-1, [rhs])
+
+def test_hyperplane3d():
+    'test hyperplane construction in 3d'
+
+    pts = [[0, 1, 0], [0, 0, 1], [0, 0, 0]]
+    normal, rhs = kamenev.hyperplane(pts, [0.5, 0.5, 0.5])
+
+    for pt in pts:
+        assert np.allclose([np.dot(pt, normal)], [rhs])
+
+def test_regular_simplex_vecs():
+    'tests for n dimensional regular simplex'
+
+    for dims in [2, 3, 5, 10]:
+
+        pts = kamenev.regular_simplex_vecs(dims)
+        assert len(pts) == dims + 1
+
+        # compute centroid
+        centroid_sum = [0] * dims
+
+        for pt in pts:
+            assert len(pt) == dims
+
+            for index, x in enumerate(pt):
+                centroid_sum[index] += x
+
+        for index in range(dims):
+            centroid_sum[index] /= len(pts)
+
+        assert np.allclose(np.array(centroid_sum), np.zeros((dims,))), "centroid was not zero"
+
+        # make sure each vec is equidistant from the other ones
+        random.seed(0)
+        num_samples = 10
+
+        for _ in range(num_samples):
+            # pick two random edges
+
+            index_a = random.randint(0, dims)
+            index_b = random.randint(0, dims - 1)
+
+            # make sure we don't pick the same index
+            if index_b >= index_a:
+                index_b += 1
+
+            a = np.array(pts[index_a], dtype=float)
+            b = np.array(pts[index_b], dtype=float)
+
+            index_c = random.randint(0, dims)
+            index_d = random.randint(0, dims - 1)
+
+            # make sure we don't pick the same index
+            if index_d >= index_c:
+                index_d += 1
+
+            c = np.array(pts[index_c], dtype=float)
+            d = np.array(pts[index_d], dtype=float)
+
+            dist_ab = np.linalg.norm(a - b)
+            dist_cd = np.linalg.norm(c - d)
+            tol = 1e-9
+
+            assert abs(dist_ab - dist_cd) < tol, f"distance between points {index_a} and {index_b} ({dist_ab}) is " + \
+                f"different distance between points {index_c} and {index_d} ({dist_cd})"

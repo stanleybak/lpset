@@ -172,7 +172,8 @@ class LpSet(Freezable):
         returns a list of 2-d points that wraps, so that rv[0] == rv[-1]
         '''
 
-        return lpplot.get_verts(self.lpi, xdim=xdim, ydim=ydim, plot_vecs=LpSet.plot_vecs)
+        #return lpplot.get_verts(self.lpi, xdim=xdim, ydim=ydim, plot_vecs=LpSet.plot_vecs)
+        return lpplot.get_verts_nd(self.lpi, [xdim, ydim])
 
     def verts3d(self, xdim=0, ydim=1, zdim=2):
         '''get (an approximation of) the vertices of a 3d projection of this lpset
@@ -180,12 +181,15 @@ class LpSet(Freezable):
         this returns a list of 3d points
         '''
 
-        return lpplot.get_verts3d(self.lpi, xdim=xdim, ydim=ydim, zdim=zdim)
+        return lpplot.get_verts_nd(self.lpi, [xdim, ydim, zdim])
 
     def plot(self, color='k-', xdim=0, ydim=1):
         'use matplotlib to plot this lpset'
 
-        verts = self.verts(xdim=xdim, ydim=ydim)
+        print(".todo use new verts() in plot()")
+        verts = lpplot.get_verts(self.lpi, xdim=xdim, ydim=ydim, plot_vecs=LpSet.plot_vecs)
+                
+#        verts = self.verts(xdim=xdim, ydim=ydim)
 
         xs, ys = zip(*verts)
         plt.plot(xs, ys, color)
