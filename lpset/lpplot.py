@@ -33,14 +33,17 @@ def pt_to_plot_xy(pt, xdim=0, ydim=1, cur_time=0.0):
 
     return x, y
 
-def get_verts_nd(lpi, dim_list):
+def get_verts_nd(lpi, dims):
     '''
-    get an approximation of the vertices of the 3d projection of the lpi
+    get an the n-dimensional vertices
 
-    divider is used to control the number of samples, larger will be more accurate but take longer
-
-    generally, the number of samples will be 4*(divider+2)*(divider+1), so divider=5 is 168 samples, 10 is 528 samples
+    if dims is an int, this uses the first dim coordinates of the lpi
     '''
+
+    if isinstance(dims, int):
+        dim_list = [n for n in range(dims)]
+    else:
+        raise RuntimeError(f"unsupported dims type: {type(dims)}")
 
     # algorithm: Kamenev's method in n-d
 

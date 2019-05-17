@@ -41,7 +41,7 @@ class LpSet(Freezable):
 
         if dims is None:
             dims = self.csr.shape[1]
-               
+
         if a_mat is not None:
             if not isinstance(rhs, np.ndarray):
                 a_mat = np.array(a_mat, dtype=float)

@@ -36,6 +36,65 @@ def test_2d_zonotope():
     expected = [[-1, -2], [-1, 0], [1, 2], [1, 0]]
     assert_verts_equals(m.verts(), expected)
 
+def test_verts_degenerate():
+    'test constructing verts with degenerate polytopes'
+
+    # list of tests to skip (for isolating tests when debugging)
+    skip_tests = [0, 2, 3, 4, 5, 6]# [0, 1, 2, 3, 4, 5]
+
+    # 2-d box (non-degenerate)
+    if 0 not in skip_tests:
+        m = lpset.from_box([[0, 1], [0, 1]])
+        verts = lpplot.get_verts_nd(m.lpi, m.lpi.dims)
+        assert_verts_equals(verts, [[0, 0], [0, 1], [1, 1], [1, 0]])
+
+    # 4-d box with two of the dimensions being flat
+    if 1 not in skip_tests:
+        m = lpset.from_box([[5, 5], [1, 2], [7, 7], [3, 5]])
+        verts = lpplot.get_verts_nd(m.lpi, m.lpi.dims)
+        assert_verts_equals(verts, [[5, 1, 7, 3], [5, 2, 7, 3], [5, 2, 7, 5], [5, 1, 7, 5]])
+
+    if 2 not in skip_tests:
+        # unit square with constraints x+y = 0 (should just be the origin)
+        mat = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1]]
+        rhs = [1, 0, 1, 0, 0]
+        m = lpset.LpSet(mat, rhs)
+        verts = lpplot.get_verts_nd(m.lpi, m.lpi.dims)
+        assert_verts_equals(verts, [0, 0])
+
+    if 3 not in skip_tests:
+        # unit square with constraints x+y = 2 (should just be the [1, 1])
+        mat = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1]]
+        rhs = [1, 0, 1, 0, 2]
+        m = lpset.LpSet(mat, rhs)
+        verts = lpplot.get_verts_nd(m.lpi, m.lpi.dims)
+        assert_verts_equals(verts, [1, 1])
+
+    if 4 not in skip_tests:
+        # unit square with constraints x+y = 1
+        mat = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1]]
+        rhs = [1, 0, 1, 0, 1]
+        m = lpset.LpSet(mat, rhs)
+        verts = lpplot.get_verts_nd(m.lpi, m.lpi.dims)
+        assert_verts_equals(verts, [[1, 0], [0, 1]])
+
+    if 5 not in skip_tests:
+        # unit cube with constraints x+y+z = 1
+        # set is a 2-d triangle in 3-d space
+        mat = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1], [1, 1, 1]]
+        rhs = [1, 0, 1, 0, 1, 0, 1]
+        m = lpset.LpSet(mat, rhs)
+        verts = lpplot.get_verts_nd(m.lpi, m.lpi.dims)
+        assert_verts_equals(verts, [[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+
+    # 2-d box in 3-d
+    if 6 not in skip_tests:
+        m = lpset.from_box([[0, 1], [0, 1], [5, 5]])
+        verts = lpplot.get_verts_nd(m.lpi, m.lpi.dims)
+        assert_verts_equals(verts, [[0, 0, 5], [0, 1, 5], [1, 1, 5], [1, 0, 5]])
+
+    assert not skip_tests, "failing because some tests were skipped"
+
 def test_matthias_zonotopes():
     'tests from_centered_zonotope constructor'
 
@@ -56,8 +115,8 @@ def test_matthias_zonotopes():
     # Z_{s,2}
     s2 = lpset.from_centered_zonotope([[0.5, -0.5], [0, 0.5]])
 
-    s2.plot()
-    plt.show()
+    #s2.plot()
+    #plt.show()
     
     expected = [[-0.5, 0], [-0.5, 1.0], [0.5, 0], [0.5, -1.0]]
     assert_verts_equals(s2.verts(), expected)

@@ -69,7 +69,12 @@ def hyperplane(pts, interior_pt):
         a_mat.append(np.array(pt, dtype=float) - pt0)
 
     # a_mat is now an (n-1) by n matrix
-    _, _, vh = np.linalg.svd(a_mat)
+    _, s, vh = np.linalg.svd(a_mat)
+
+    print(f"singular values: {s}")
+
+    tol = 1e-7
+    assert len(s) == dims - 1 and s[-1] > tol, f"hyperplane was not uniquely defined, singular values: {s}"
 
     # the last singular vector should be orthogonal to all the vectors in a_mat
     normal_vec = vh[-1]
@@ -90,36 +95,199 @@ def hyperplane(pts, interior_pt):
         normal_vec = -normal_vec
         rhs *= -1
 
-    print(". checking hyperplane() result (todo: remove)")
-    for pt in pts:
-        assert np.allclose([np.dot(pt, normal_vec)], [rhs])
-
     return normal_vec, rhs
-        
-def verts(dims, supp_point_func, epsilon=1e-7):
-    'get all the vertices of the set, in the given number of dimensions, defined through supp_point_func'
 
-    tol = 1e-7
+def get_orthonormal_rank(vecs, tol=1e-7):
+    '''
+    given a list of vecs, return a new vector orthonormal to them and the rank of the matrix
+    '''
+
+    _, s, v = np.linalg.svd(vecs)
+
+    index = 0
+
+    while index < len(s) and s[index] > tol:
+        index += 1
+
+    if index == len(v):
+        rv_vec = None # the vectors span the space
+    else:
+        rv_vec = v[index]
+
+    return rv_vec, index
+
+def get_rank(vecs, tol=1e-7):
+    '''get the rank of the passed in matrix'''
+
+    return get_orthonormal_rank(vecs, tol=tol)[1]
+
+def find_two_points(dims, supp_point_func):
+    '''find two points in the the convex set defined through supp_point_func (which may be degenerate)
+
+    if len(pts) == 1, the convex set is a degenerate set consisting of a single pt
+    '''
+
+    pts = []
+
+    for d in range(dims):
+        vec = np.array([-1 if i == d else 0 for i in range(dims)], dtype=float)
+
+        # try min
+        p = supp_point_func(vec)
+
+        if not pts:
+            pts.append(p)
+        elif not np.allclose(p, p[0]):
+            pts.append(p)
+            break
+        
+        # try max
+        vec = np.array([1 if i == d else 0 for i in range(dims)], dtype=float)
+        p = supp_point_func(vec)
+
+        if not np.allclose(p, p[0]):
+            pts.append(p)
+            break
+
+    return pts
+
+def verts(dims, supp_point_func, epsilon=1e-7):
+    '''
+    get the n-dimensional vertices of the convex set defined through supp_point_func (which may be degenerate)
+    '''
+
+    # first, construct the initial simplex and determine a basis for the convex set (it may be degenerate)
+    pts = find_two_points(dims, supp_point_func)
+
+    if len(pts) == 1: # S is a degenerate shape consisting of a single point
+        return pts
+    
+    init_simplex = [pts[0], pts[1]]
+
+    init_vec = pts[1] - pts[0]
+    print(f"two initial points: {pts}, init_vec: {init_vec}")
+     
+    spanning_dirs = [init_vec]
+    degenerate_dirs = []
+    vecs = [init_vec]
+
+    for it in range(dims - 1):
+        new_dir, rank = get_orthonormal_rank(vecs)
+        print(f"\nIteration {it}: new orthonormal directon: {new_dir}")
+        print(f"vecs was:\n{vecs}")
+
+        # min/max in direction v, checking if it increases the rank of vecs
+        pt = supp_point_func(new_dir)
+        vecs.append(pt - init_simplex[0])
+
+        if get_rank(vecs) > rank:
+            print(f"rank increased after maximize, adding point {pt}")
+            init_simplex.append(pt)
+            spanning_dirs.append(vecs[-1])
+            print(f"added new spanning direction: {vecs[-1]}")
+            continue
+
+        # rank did not increase with maximize, try minimize
+        print(f"rank did not increase after maximize... trying minimize")
+        vecs = vecs[0:-1] # pop vec
+
+        pt = supp_point_func(-1 * new_dir)
+        vecs.append(pt - init_simplex[0])
+
+        if get_rank(vecs) > rank:
+            print(f"rank increased after minimize, adding point {pt}")
+            init_simplex.append(pt)
+            spanning_dirs.append(vecs[-1])
+            print(f"added new spanning direction: {vecs[-1]}")
+            continue
+
+        # rank still didn't increase, new_dir is orthogonal to shape S
+        vecs = vecs[0:-1] # pop vec
+        print(f"rank also didn't increase after minimize, polytope is degenerate in direction {new_dir}")
+
+        vecs.append(new_dir) # forces a new orthonormal direction during the next iteration
+        degenerate_dirs.append(new_dir)
+
+    # spanning_dirs and degenerate_dirs form an orthonormal basis for R^n
+    assert len(spanning_dirs) + len(degenerate_dirs) == dims
+    assert len(init_simplex) == 1 + len(spanning_dirs)
+
+    print(f"spanning_dirs:\n{spanning_dirs}")
+    print(f"degenerate_dirs:\n{degenerate_dirs}")
+
+    # len(spanning_dirs) is the dimensionality of the shape
+    # degenerate_dirs can be used to compute an offset to be added to all final vertices
+    span_dims = len(spanning_dirs)
+    
+    basis_mat = np.array(spanning_dirs + degenerate_dirs, dtype=float).transpose()
+    inv_basis_mat = np.linalg.inv(basis_mat)
+
+    # converting from projected space -> original space will use basis_mat
+    # converting from original space -> projected space will use inv_basis_mat
+
+    print(f"basis_mat:\n{basis_mat}")
+    print(f"inv_basis_mat:\n{inv_basis_mat}")
+
+    def modified_supp_pt_func(proj_vec):
+        'supp_point_func defined in projected space'
+
+        aug_proj_vec = [proj_vec[i] if i < len(proj_vec) else 0 for i in range(dims)]
+        orig_vec = np.dot(basis_mat, aug_proj_vec)
+
+        orig_pt = supp_point_func(orig_vec)
+
+        # project proj_pt to spanning space
+        proj_pt = np.dot(inv_basis_mat, orig_pt)
+        trun_proj_pt = proj_pt[0:span_dims]
+
+        return trun_proj_pt
+
+    print(f"init_simplex_verts (original space): {init_simplex}")
+
+    # project and truncate every point from init_simplex into the projected space
+    proj_init_simplex = [np.dot(inv_basis_mat, vert)[0:span_dims] for vert in init_simplex]
+
+    print(f"init_simplex_verts (projected space): {proj_init_simplex}")
+
+    proj_verts = verts_given_init_simplex(proj_init_simplex, len(spanning_dirs), modified_supp_pt_func, epsilon=epsilon)
+
+    # convert projected verts back to the original space
     rv = []
 
-    init_simplex_verts = []
-    interior_pt = np.zeros((dims,), dtype=float)
+    null_space_offset = [np.dot(degenerate_dir, init_simplex[0]) for degenerate_dir in degenerate_dirs]
 
-    for vec in regular_simplex_vecs(dims):
-        pt = supp_point_func(vec)
+    for v in proj_verts:
+        full_d_pt = [v[i] if i < len(v) else null_space_offset[i - span_dims] for i in range(dims)]
+                
+        pt = np.dot(basis_mat, full_d_pt)
 
         rv.append(pt)
-        init_simplex_verts.append(pt)
-        
-        for i in range(dims):
-            interior_pt[i] += pt[i]
 
-    # interior_pt will be the centroid of the initial simplex vertices
-    for i in range(dims):
-        interior_pt[i] /= (dims + 1)
+        print(f"proj_vert({v}) -> {pt}")
+
+    return rv
+
+def verts_given_init_simplex(init_simplex_verts, dims, supp_point_func, epsilon=1e-7):
+    '''get all the vertices of the set, in the given number of dimensions, defined through supp_point_func
+
+    This function is provided with an initial simplex which spans the space.
+    '''
+
+    assert len(init_simplex_verts) == dims + 1
+    assert len(init_simplex_verts[0]) == dims
+
+    tol = 1e-7
+    interior_pt = np.zeros((dims,), dtype=float)
+
+    for pt in init_simplex_verts:
+        interior_pt += pt
+
+    interior_pt /= (dims + 1)
 
     print(f"init_simplex_verts: {init_simplex_verts}")
     print(f"interior_pt: {interior_pt}")
+
+    rv = [] + init_simplex_verts
 
     # priority queue key is a 2-tuple, (-1 * error, count) (-1 so maximum error gets popped first, count to break ties)
     # value is a 4-tuple corresponding to a single facet: (verts, hyperplane_normal, hyperplane_rhs, supporting_pt)
