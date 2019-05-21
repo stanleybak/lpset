@@ -40,7 +40,7 @@ def test_verts_degenerate():
     'test constructing verts with degenerate polytopes'
 
     # list of tests to skip (for isolating tests when debugging)
-    skip_tests = [0, 2, 3, 4, 5, 6]# [0, 1, 2, 3, 4, 5]
+    skip_tests = []# [0, 1, 2, 3, 4, 5]
 
     # 2-d box (non-degenerate)
     if 0 not in skip_tests:
@@ -55,7 +55,7 @@ def test_verts_degenerate():
         assert_verts_equals(verts, [[5, 1, 7, 3], [5, 2, 7, 3], [5, 2, 7, 5], [5, 1, 7, 5]])
 
     if 2 not in skip_tests:
-        # unit square with constraints x+y = 0 (should just be the origin)
+        # unit square with constraints x+y <= 0 (should just be the origin)
         mat = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1]]
         rhs = [1, 0, 1, 0, 0]
         m = lpset.LpSet(mat, rhs)
@@ -64,16 +64,16 @@ def test_verts_degenerate():
 
     if 3 not in skip_tests:
         # unit square with constraints x+y = 2 (should just be the [1, 1])
-        mat = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1]]
-        rhs = [1, 0, 1, 0, 2]
+        mat = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1]]
+        rhs = [1, 0, 1, 0, 2, -2]
         m = lpset.LpSet(mat, rhs)
         verts = lpplot.get_verts_nd(m.lpi, m.lpi.dims)
         assert_verts_equals(verts, [1, 1])
 
     if 4 not in skip_tests:
         # unit square with constraints x+y = 1
-        mat = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1]]
-        rhs = [1, 0, 1, 0, 1]
+        mat = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1]]
+        rhs = [1, 0, 1, 0, 1, -1]
         m = lpset.LpSet(mat, rhs)
         verts = lpplot.get_verts_nd(m.lpi, m.lpi.dims)
         assert_verts_equals(verts, [[1, 0], [0, 1]])
@@ -81,8 +81,8 @@ def test_verts_degenerate():
     if 5 not in skip_tests:
         # unit cube with constraints x+y+z = 1
         # set is a 2-d triangle in 3-d space
-        mat = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1], [1, 1, 1]]
-        rhs = [1, 0, 1, 0, 1, 0, 1]
+        mat = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1], [1, 1, 1], [-1, -1, -1]]
+        rhs = [1, 0, 1, 0, 1, 0, 1, -1]
         m = lpset.LpSet(mat, rhs)
         verts = lpplot.get_verts_nd(m.lpi, m.lpi.dims)
         assert_verts_equals(verts, [[1, 0, 0], [0, 1, 0], [0, 0, 1]])
@@ -92,6 +92,16 @@ def test_verts_degenerate():
         m = lpset.from_box([[0, 1], [0, 1], [5, 5]])
         verts = lpplot.get_verts_nd(m.lpi, m.lpi.dims)
         assert_verts_equals(verts, [[0, 0, 5], [0, 1, 5], [1, 1, 5], [1, 0, 5]])
+
+    if 7 not in skip_tests:
+        # unit 4-d cube with constraints w+x+y+z = 1
+        # set is a 3-d simplex in 4-d space
+        mat = [[1, 0, 0, 0], [-1, 0, 0, 0], [0, 1, 0, 0], [0, -1, 0, 0], [0, 0, 1, 0], [0, 0, -1, 0],
+               [0, 0, 0, 1], [0, 0, 0, -1], [1, 1, 1, 1], [-1, -1, -1, -1]]
+        rhs = [1, 0, 1, 0, 1, 0, 1, 0, 1, -1]
+        m = lpset.LpSet(mat, rhs)
+        verts = lpplot.get_verts_nd(m.lpi, m.lpi.dims)
+        assert_verts_equals(verts, [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
 
     assert not skip_tests, "failing because some tests were skipped"
 
@@ -141,6 +151,9 @@ def test_3d_box_plot():
     m.plot3d(ax)
 
     #plt.show()
+
+print("debug 3dboxplot test")
+test_3d_box_plot()
 
 def test_3d_zonotope_plot():
     'test verts3d on zonotope'

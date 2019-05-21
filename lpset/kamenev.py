@@ -9,6 +9,12 @@ import math
 from heapq import heappush, heappop
 
 import numpy as np
+import scipy as sp
+
+import matplotlib.pyplot as plt
+
+import lpplot3d
+from util import Freezable
 
 def regular_simplex_vecs(dims):
     '''get vertex points associated with a regular simplex in n-dimensions
@@ -69,12 +75,15 @@ def hyperplane(pts, interior_pt):
         a_mat.append(np.array(pt, dtype=float) - pt0)
 
     # a_mat is now an (n-1) by n matrix
+    a_mat = np.array(a_mat, dtype=float)
+    a_mat.shape = (dims-1, dims)
+
     _, s, vh = np.linalg.svd(a_mat)
 
     print(f"singular values: {s}")
 
     tol = 1e-7
-    assert len(s) == dims - 1 and s[-1] > tol, f"hyperplane was not uniquely defined, singular values: {s}"
+    assert len(s) == dims - 1 and (dims == 1 or s[-1] > tol), f"hyperplane was not unique , singular values: {s}"
 
     # the last singular vector should be orthogonal to all the vectors in a_mat
     normal_vec = vh[-1]
@@ -137,7 +146,7 @@ def find_two_points(dims, supp_point_func):
 
         if not pts:
             pts.append(p)
-        elif not np.allclose(p, p[0]):
+        elif not np.allclose(p, pts[0]):
             pts.append(p)
             break
         
@@ -145,7 +154,7 @@ def find_two_points(dims, supp_point_func):
         vec = np.array([1 if i == d else 0 for i in range(dims)], dtype=float)
         p = supp_point_func(vec)
 
-        if not np.allclose(p, p[0]):
+        if not np.allclose(p, pts[0]):
             pts.append(p)
             break
 
@@ -160,6 +169,7 @@ def verts(dims, supp_point_func, epsilon=1e-7):
     pts = find_two_points(dims, supp_point_func)
 
     if len(pts) == 1: # S is a degenerate shape consisting of a single point
+        print(f"find_two_points returned single point: {pts}")
         return pts
     
     init_simplex = [pts[0], pts[1]]
@@ -215,12 +225,26 @@ def verts(dims, supp_point_func, epsilon=1e-7):
     print(f"spanning_dirs:\n{spanning_dirs}")
     print(f"degenerate_dirs:\n{degenerate_dirs}")
 
+    if len(degenerate_dirs) == 0:
+        print(f"using identity as spanning dirs")
+        spanning_dirs = np.identity(len(spanning_dirs), dtype=float)
+    else:
+        # convert spanning_dirs to an orthonnormal basis
+        new_spanning_dirs = sp.linalg.orth(np.array(spanning_dirs, dtype=float).transpose())
+
+        print(f"ortho spanning_dirs:\n{new_spanning_dirs}")
+
+        assert len(spanning_dirs) == new_spanning_dirs.shape[1], "num cols changed during sp.linalg.orth()"
+        spanning_dirs = new_spanning_dirs
+
     # len(spanning_dirs) is the dimensionality of the shape
     # degenerate_dirs can be used to compute an offset to be added to all final vertices
-    span_dims = len(spanning_dirs)
+    #span_dims = len(spanning_dirs)
     
-    basis_mat = np.array(spanning_dirs + degenerate_dirs, dtype=float).transpose()
-    inv_basis_mat = np.linalg.inv(basis_mat)
+    #basis_mat = np.array(spanning_dirs + degenerate_dirs, dtype=float).transpose()
+    #inv_basis_mat = np.linalg.inv(basis_mat)
+    basis_mat = spanning_dirs
+    inv_basis_mat = spanning_dirs.transpose().copy()
 
     # converting from projected space -> original space will use basis_mat
     # converting from original space -> projected space will use inv_basis_mat
@@ -231,41 +255,183 @@ def verts(dims, supp_point_func, epsilon=1e-7):
     def modified_supp_pt_func(proj_vec):
         'supp_point_func defined in projected space'
 
-        aug_proj_vec = [proj_vec[i] if i < len(proj_vec) else 0 for i in range(dims)]
-        orig_vec = np.dot(basis_mat, aug_proj_vec)
+        #aug_proj_vec = [proj_vec[i] if i < len(proj_vec) else 0 for i in range(dims)]
+        #orig_vec = np.dot(basis_mat, aug_proj_vec)
+        orig_vec = np.dot(basis_mat, proj_vec)
 
         orig_pt = supp_point_func(orig_vec)
 
         # project proj_pt to spanning space
         proj_pt = np.dot(inv_basis_mat, orig_pt)
-        trun_proj_pt = proj_pt[0:span_dims]
 
-        return trun_proj_pt
+        return proj_pt
 
     print(f"init_simplex_verts (original space): {init_simplex}")
 
     # project and truncate every point from init_simplex into the projected space
-    proj_init_simplex = [np.dot(inv_basis_mat, vert)[0:span_dims] for vert in init_simplex]
+    proj_init_simplex = [np.dot(inv_basis_mat, vert) for vert in init_simplex]
 
     print(f"init_simplex_verts (projected space): {proj_init_simplex}")
 
-    proj_verts = verts_given_init_simplex(proj_init_simplex, len(spanning_dirs), modified_supp_pt_func, epsilon=epsilon)
+    proj_dims = basis_mat.shape[1]
+    proj_verts = verts_given_init_simplex(proj_init_simplex, proj_dims, modified_supp_pt_func, epsilon=epsilon)
 
     # convert projected verts back to the original space
     rv = []
 
-    null_space_offset = [np.dot(degenerate_dir, init_simplex[0]) for degenerate_dir in degenerate_dirs]
+    null_space_offset = [np.dot(d, init_simplex[0]) * d for d in degenerate_dirs]
 
     for v in proj_verts:
-        full_d_pt = [v[i] if i < len(v) else null_space_offset[i - span_dims] for i in range(dims)]
-                
-        pt = np.dot(basis_mat, full_d_pt)
 
-        rv.append(pt)
+        orig_pt = np.dot(basis_mat, v)
 
-        print(f"proj_vert({v}) -> {pt}")
+        # add null space offset
+        for offset in null_space_offset:
+            orig_pt += offset
+
+        rv.append(orig_pt)
+
+        print(f"proj_vert({v}) -> {orig_pt}")
 
     return rv
+
+def centroid(pts):
+    'get the centroid (average) of the given points'
+
+    rv = np.zeros(pts[0].shape, dtype=float)
+
+    for pt in pts:
+        rv += pt
+
+    rv /= len(pts)
+
+    return rv
+
+def plot_triangle_verts(ax, pts, color, lw=1):
+    'plot triangle verties in 3d'
+
+    assert len(pts[0]) == 3, f"verts dimension: {len(pts[0])}"
+    assert len(pts) == 3, f"expected 3 verts per facet, got {len(pts)}"
+
+    xs = [pts[-1][0]]
+    ys = [pts[-1][1]]
+    zs = [pts[-1][2]]
+
+    for pt in pts:
+        xs.append(pt[0])
+        ys.append(pt[1])
+        zs.append(pt[2])
+
+    ax.plot(xs, ys, zs, color, lw=lw)
+
+class Facet(Freezable):
+    'facet data structure used when constructing verts'
+
+    count = 0
+
+    def __init__(self, verts, normal_vec, normal_rhs, epsilon, supporting_pt):
+        self.epsilon = epsilon # error tolerance during construction
+
+        # parallel lists: each neighbor facet shares a ridge with this facet if the corresponding vertex is excluded
+        self.verts = verts
+        self.neighbors = [None] * len(verts) # list of facets (parallel list to verts): should be populated later 
+
+        assert np.allclose([np.linalg.norm(normal_vec)], [1.0])
+
+        # these define the hyperplane
+        self.normal_vec = normal_vec
+        self.normal_rhs = normal_rhs
+
+        # the supporting point in the set in the outward direction of this face.
+        # If None, then face is extreme (within epsilon)
+        # use set_support() to set
+        self.supporting_pt = None
+        self.supporting_val = None
+        self.supporting_error = None
+
+        self.facet_id = Facet.count
+        Facet.count += 1
+
+        # a flag used for deleting facets off the error-sorted heap, without actually touching the heap
+        self.was_deleted = False
+
+        self.set_support(supporting_pt)
+
+        self.freeze_attrs()
+
+    def __str__(self):
+        return f"[Facet {self.facet_id} w/ error {self.supporting_error}]"
+
+    def plot3d(self, ax, color='k:', lw=1):
+        'plot this 3-d facet (2d triangle) on the given axis object'
+
+        plot_triangle_verts(ax, self.verts, color, lw)
+
+    def set_support(self, supporting_pt):
+        '''set the supporting point and value (point in the set S outside of this facet)
+
+        if supporting_pt is within the hyperplane defined by this facet, this sets supporting_pt/val/error to None
+        '''
+
+        supporting_val = np.dot(supporting_pt, self.normal_vec)
+        error = supporting_val - self.normal_rhs
+
+        if error > self.epsilon:
+            self.supporting_pt = supporting_pt
+            self.supporting_val = supporting_val
+            self.supporting_error = error
+        else:
+            self.supporting_pt = None
+            self.supporting_val = None
+            self.supporting_error = None
+
+    def get_ridge(self, ridge_verts):
+        '''is the passed-in ridge part of this facet?
+        If so, return the exclude_vert_index that defines the ridge, else None
+        '''
+
+        rv = '<all were close?>'
+
+        for index, vert in enumerate(self.verts):
+            found_pt = False
+            
+            for pt in ridge_verts:
+                if np.allclose(pt, vert):
+                    found_pt = True
+                    break
+
+            if not found_pt:
+                if rv is None:
+                    rv = index
+                else:
+                    rv = None # multiple indices not found... not a ridge
+                    break
+
+        assert not isinstance(rv, str), "all verts were close to ridge verts; numerical precision issues probably"
+
+        return rv
+
+    
+def max_error_facet(facets):
+    'return the facet with the maximum error'
+
+    # efficiency could be improved... this simply iterates over all facets
+
+    rv = None
+
+    for f in facets:
+        if f.supporting_error is not None:
+            if rv is None or rv.supporting_error < f.supporting_error:
+                rv = f
+
+    return rv
+
+def get_visible_and_horizon(new_pt, [max_f]):
+    'get the visible facets and horizon ridges'
+
+    TODO WORKING HERE!!!!!!!
+
+    return visible_facets, horizon_ridges
 
 def verts_given_init_simplex(init_simplex_verts, dims, supp_point_func, epsilon=1e-7):
     '''get all the vertices of the set, in the given number of dimensions, defined through supp_point_func
@@ -276,109 +442,170 @@ def verts_given_init_simplex(init_simplex_verts, dims, supp_point_func, epsilon=
     assert len(init_simplex_verts) == dims + 1
     assert len(init_simplex_verts[0]) == dims
 
-    tol = 1e-7
-    interior_pt = np.zeros((dims,), dtype=float)
-
-    for pt in init_simplex_verts:
-        interior_pt += pt
-
-    interior_pt /= (dims + 1)
-
     print(f"init_simplex_verts: {init_simplex_verts}")
-    print(f"interior_pt: {interior_pt}")
 
     rv = [] + init_simplex_verts
 
-    # priority queue key is a 2-tuple, (-1 * error, count) (-1 so maximum error gets popped first, count to break ties)
-    # value is a 4-tuple corresponding to a single facet: (verts, hyperplane_normal, hyperplane_rhs, supporting_pt)
-    remaining_facets_heap = []
-    heap_count = 0
+    init_facets = [] # initial facets, ordered by which vertex was excluded to construct them
 
     # construct facets from init_simplex_verts by excluding one of the vertices
     for exclude_index in range(dims+1):
+        interior_pt = centroid(init_simplex_verts)
         pts = init_simplex_verts[:exclude_index] + init_simplex_verts[exclude_index + 1:]
 
         # construct hyperplane through pts
-        normal, rhs = hyperplane(pts, interior_pt)
+        f_normal, f_rhs = hyperplane(pts, interior_pt)
 
         # evaluate the error on the given face
-        supporting_pt = supp_point_func(normal)
-        support_val = np.dot(supporting_pt, normal)
+        f_supporting_pt = supp_point_func(f_normal)
 
-        error = support_val - rhs
+        f = Facet(pts, f_normal, f_rhs, epsilon, f_supporting_pt)
 
-        print(f"pts for facet: {pts}")
-        print(f"equation for hyperplane: ({normal})*x <= {rhs}")
-        print(f"supporting_pt in normal direction: {supporting_pt}")
-        print(f"supporting_val: {support_val}")
+        init_facets.append(f)
 
-        assert error + tol >= 0, "support_val < hyperplane_rhs? shouldn't happen for convex sets"
+    # facets which are on the convex hull
+    extreme_facets = [] 
 
-        if error > epsilon:
-            key = (-error, heap_count)
-            heap_count += 1
-            val = (pts, normal, rhs, supporting_pt)
-            heappush(remaining_facets_heap, (key, val))
-            print(f"added facet with error {error} to heap")
+    # facets which are not part of the convex hull
+    # heap of tuples: (-error, facet_id, facet)   [-error is used so maximum error is popped first]
+    non_extreme_facet_heap = [] 
+
+    # assign facet neighbors of init simplex
+    for init_facet in init_facets:
+        
+        for exclude_vert_index in range(len(init_facet.verts)):
+            # find the facet in init_facets which contains the ridge when exclude_vert_index is excluded from the facet
+
+            if init_facet.neighbors[exclude_vert_index] is not None:
+                continue # neighbor for this facet was already assigned
+
+            # construct the ridge we're interested in:
+            ridge = init_facet.verts.copy()
+            del ridge[exclude_vert_index]
+
+            # search the OTHER facets for this ridge
+            for other_init_facet in init_facets:
+                if other_init_facet is init_facet:
+                    continue
+
+                other_exclude_index = other_init_facet.get_ridge(ridge)
+                
+                if other_exclude_index is not None:
+                    init_facet.neighbors[exclude_vert_index] = other_init_facet
+                    assert other_init_facet[other_exclude_index] is None
+                    other_init_facet[other_exclude_index] = init_facet
+                    break
+
+            assert init_facet.neighbors[exclude_vert_index] is not None, "neighbor of initial facet not found"
+
+            # add the facet to either extreme_facets or non_extreme_facets
+            if init_facet.supporting_error is None:
+                extreme_facets.append(init_facet)
+            else:
+                tup = (-init_facet.supporting_error, init_facet.facet_id, init_facet)
+                heappush(non_extreme_facet_heap, tup)
 
     iteration = 0
-    
-    # process remaining faces one-by-one
-    while remaining_facets_heap:
-        obj = heappop(remaining_facets_heap)
-        neg_error = obj[0][0]
+
+    plot = True
+
+    # process remaining facets one-by-one
+    while non_extreme_facet_heap:
+        _, _, max_f = heappop(non_extreme_facet_heap)
 
         iteration += 1
         print(f"\n-------")
-        print(f"Iteration {iteration}: cur_error: {-neg_error}, cur_remaining_facets: {len(remaining_facets_heap)}")
-        facet_verts, normal, rhs, normal_supporting_pt = obj[1]
+        print(f"Iteration {iteration}; non-extreme-facets remaining: {1 + len(non_extreme_facet_heap)}")
 
-        print(f"facet_verts: {facet_verts}")
-        print(f"rv verts: {rv}")
-        print(f"normal_supporting_pt: {normal_supporting_pt}")
+        if max_f.was_deleted:
+            print(f"max_facet was deleted, continuing")
+            continue
+        
+        print(f"new_pt: {max_f.supporting_pt} from facet {max_f.facet_id} with error {max_f.supporting_error}")
 
-        rv.append(normal_supporting_pt)
+        assert iteration < 10, "debug break 10 iterations" # TODO: remove
 
-        #interior_pt = np.zeros((dims,), dtype=float)
-        #
-        #for pt in facet_verts:
-        #    interior_pt += pt
-        #
-        #interior_pt /= len(facet_verts)
+        # extend the triangulation by removing newly-redundant facets after normal_supporting_pt was added
+        # I believe this is from the "Beyond-Beneath" convex hull algorithm
 
-        # split this facet into n new facets, by excluding a single point from verts and including supp_pt
-        assert len(facet_verts) == dims
+        new_point = max_f.supporting_pt
 
-        for exclude_index in range(dims):
-            pts = facet_verts[:exclude_index] + facet_verts[exclude_index + 1:]
-            pts.append(normal_supporting_pt)
+        # TODO: remove this check that new_point not in rv
+        for pt in rv:
+            assert not np.allclose(pt, new_point), f"point was extreme twice: {new_point}"
+        
+        rv.append(new_point)
 
-            print(f"\nexcluding index {exclude_index}")
-            print(f"pts for facet: {pts}")
-            print(f"interior_pt: {interior_pt}")
+        interior_pt = centroid(max_f.verts + [new_point])
 
-            # construct hyperplane through pts
-            normal, rhs = hyperplane(pts, interior_pt)
+        visible_facets, horizon_ridges = get_visible_and_horizon(new_pt, [max_f])
+
+        print(f"num visible_facets: {len(visible_facets)}")
+        print(f"num horizon_ridges: {len(horizon_ridges)}")
+
+        # mark all visible facets as deleted
+        for vis_facet in visible_facets:
+            vis_facet.was_deleted = True
+
+        # create new facets from each of the horizon ridges
+        # a horizon ridge consists of a tuple: (facet, exclude_vert_index)
+        new_facets = []
+
+        for horizon_ridge in horizon_ridges:
+            horizon_facet, exclude_vert_index = horizon_ridge
+
+            new_facet_verts = horizon_facet.verts.copy()
+            del new_facet_verts[exclude_vert_index]
+            new_facet_verts.append(new_point)
+
+            print(f"new facet verts: {new_facet_verts}")
+
+            # construct hyperplane through verts
+            new_normal, new_rhs = hyperplane(new_facet_verts, interior_pt)
 
             # evaluate the error on the given face
-            supporting_pt = supp_point_func(normal)
-            support_val = np.dot(supporting_pt, normal)
+            new_supporting_pt = supp_point_func(new_normal)
 
-            error = support_val - rhs
-
-            print(f"equation for hyperplane: ({normal})*x <= {rhs}")
-            print(f"supporting_pt in normal direction: {supporting_pt}")
-            print(f"supporting_val: {support_val}")
-            print(f"error: {error}")
-
-            assert error + tol >= 0, "support_val < hyperplane_rhs? shouldn't happen for convex sets"
-
-            if error > epsilon:
-                key = (-error, heap_count)
-                heap_count += 1
-                val = (pts, normal, rhs, supporting_pt)
-                heappush(remaining_facets_heap, (key, val))
-               
-                print(f"added facet with error {error} to heap. Heap size: {len(remaining_facets_heap)}")
+            new_facet = Facet(pts, new_normal, new_rhs, epsilon, new_supporting_pt)
             
+            print(f"adding new facet {new_facet.verts} with error {new_facet.supporting_error}")
+            new_facets.append(new_facet)
+
+            # update neighbors with horizon_facet
+            horizon_facet.neighbors[exclude_vert_index] = new_facet
+            new_facet.neighbors[-1] = horizon_facet
+
+        # post process new_facets to assign neighbors
+        for new_facet in new_facets:
+            for i, neighbor in enumerate(new_facet.neighbors):
+                if neighbor is not None:
+                    continue
+
+                # construct the ridge
+                ridge = new_facet.verts.copy()
+                del ridge[i]
+
+                # look for the neighbor within new_facets
+                for other_new_facet in new_facets:
+                    if other_new_facet is new_facet:
+                        continue
+
+                    exclude_index = other_new_facet.get_ridge(ridge)
+
+                    if exclude_index is not None:
+                        new_facet.neighbors[i] = other_new_facet
+                        assert other_new_facet.neighbors[exclude_index] is None
+                        other_new_facet.neighbors[exclude_index] = new_facet
+                        break
+
+                assert new_facet.neighbors[i] is not None, "neighbor of constructed new_facet not found"
+
+                # add the facet to either extreme_facets or non_extreme_facets
+                if new_facet.supporting_error is None:
+                    extreme_facets.append(new_facet)
+                else:
+                    tup = (-new_facet.supporting_error, new_facet.facet_id, new_facet)
+                    heappush(non_extreme_facet_heap, tup)
+
+
     return np.array(rv, dtype=float)

@@ -173,7 +173,7 @@ class LpSet(Freezable):
         '''
 
         #return lpplot.get_verts(self.lpi, xdim=xdim, ydim=ydim, plot_vecs=LpSet.plot_vecs)
-        return lpplot.get_verts_nd(self.lpi, [xdim, ydim])
+        return lpplot.get_verts_nd(self.lpi, 2)
 
     def verts3d(self, xdim=0, ydim=1, zdim=2):
         '''get (an approximation of) the vertices of a 3d projection of this lpset
@@ -181,7 +181,7 @@ class LpSet(Freezable):
         this returns a list of 3d points
         '''
 
-        return lpplot.get_verts_nd(self.lpi, [xdim, ydim, zdim])
+        return lpplot.get_verts_nd(self.lpi, 3)
 
     def plot(self, color='k-', xdim=0, ydim=1):
         'use matplotlib to plot this lpset'

@@ -12,7 +12,20 @@ import matplotlib.colors as colors
 from sympy import Plane, Point3D
 import networkx as nx
 
-def plot_hull(ax, pts):
+def plot_simplex3d(ax, pts, col='r-'):
+    'plot a 3d simplex'
+
+    assert pts.shape[0] == 4
+
+    hull = ConvexHull(pts)
+
+    ax.plot(pts[:, 0], pts[:, 1], pts[:, 2], "ko")
+
+    for s in hull.simplices:
+        s = np.append(s, s[0])  # Here we cycle back to the first coordinate
+        ax.plot(pts[s, 0], pts[s, 1], pts[s, 2], col)
+
+def plot_hull(ax, pts, col='k'):
     'plot the 3d convex hull of pts onto the given axes'
 
     hull = ConvexHull(pts)
@@ -25,16 +38,14 @@ def plot_hull(ax, pts):
         poly = [p for p in zip(pts[s, 0], pts[s, 1], pts[s, 2])]
         poly3d.append(poly)
 
-
-
     #ax.add_collection3d(Poly3DCollection(poly3d, facecolors='grey', edgecolor='k', lw=0.5))
     new_faces = simplify(poly3d)
 
     for sq in new_faces:
         f = Poly3DCollection([sq])
-        f.set_color(colors.rgb2hex(sp.rand(3)))
-        f.set_edgecolor('k')
-        f.set_alpha(0.1)
+        #f.set_color(colors.rgb2hex(sp.rand(3)))
+        f.set_edgecolor(col)
+        #f.set_alpha(0.1)
         ax.add_collection3d(f)
 
 #from https://stackoverflow.com/questions/49098466/plot-3d-convex-closed-regions-in-matplot-lib
