@@ -68,7 +68,7 @@ def get_verts_nd(lpi, dims):
         
         return np.array(rv, dtype=float)
 
-    return kamenev.verts(len(dim_list), supp_point_nd)
+    return kamenev.get_verts(len(dim_list), supp_point_nd)
 
 def get_verts(lpi, xdim=0, ydim=1, plot_vecs=None, cur_time=0.0):
     '''get the vertices defining (an underapproximation) of the outside of the given linear constraints

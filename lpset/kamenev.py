@@ -159,7 +159,7 @@ def find_two_points(dims, supp_point_func):
 
     return pts
 
-def verts(dims, supp_point_func, epsilon=1e-7):
+def get_verts(dims, supp_point_func, epsilon=1e-7):
     '''
     get the n-dimensional vertices of the convex set defined through supp_point_func (which may be degenerate)
     '''
@@ -331,6 +331,18 @@ def plot_triangle_verts(ax, pts, color, lw=1):
 
     ax.plot(xs, ys, zs, color, lw=lw)
 
+class VertHub(Freezable):
+    'vert data structure which connects facets'
+
+    def __init__(self, pt):
+        self.pt = pt
+        self.facets = []
+
+        self.freeze_attrs()
+
+    def __str__(self):
+        return str(self.pt)
+
 class Facet(Freezable):
     'facet data structure used when constructing verts'
 
@@ -339,15 +351,17 @@ class Facet(Freezable):
     def __init__(self, verts, normal_vec, normal_rhs, epsilon, supporting_pt):
         self.epsilon = epsilon # error tolerance during construction
 
-        # parallel lists: each neighbor facet shares a ridge with this facet if the corresponding vertex is excluded
+        assert isinstance(verts[0], VertHub)
+
         self.verts = verts
-        self.neighbors = [None] * len(verts) # list of facets (parallel list to verts): should be populated later 
 
         assert np.allclose([np.linalg.norm(normal_vec)], [1.0])
 
         # these define the hyperplane
         self.normal_vec = normal_vec
         self.normal_rhs = normal_rhs
+
+        self.dims = len(self.normal_vec)
 
         # the supporting point in the set in the outward direction of this face.
         # If None, then face is extreme (within epsilon)
@@ -405,6 +419,53 @@ class Facet(Freezable):
             self.supporting_val = None
             self.supporting_error = None
 
+    def neighbors(self):
+        '''
+        get a list of neigboring facets (which share a ridge with this one)
+        '''
+
+        rv = []
+
+        neighbors, counts = self.count_vert_neighbors()
+
+        print(f"neighbors: {neighbors}")
+        print(f"counts: {counts}")
+
+        for neb, c in zip(neighbors, counts):
+            if c == self.dims - 1:
+                rv.append(neb)
+
+        assert len(rv) == self.dims, f"facet had {len(rv)} neighbors, expected {self.dims + 1}"
+                
+        return rv
+
+    def count_vert_neighbors(self):
+        '''
+        count the occurances of neighbor facets in this facet's verthubs
+
+        returns neighbors, counts where neighbors is a list of Facet objects and 
+                                        counts is the number of verts where that facet appears
+        '''
+
+        neighbors = []
+        counts = []
+
+        for verthub in self.verts:
+            for f in verthub.facets:
+                found = False
+
+                for i, neighbor in enumerate(neighbors):
+                    if neighbor is f:
+                        counts[i] += 1
+                        found = True
+                        break
+
+                if not found:
+                    neighbors.append(f)
+                    counts.append(1)
+
+        return neighbors, counts
+
     def get_ridge(self, ridge_verts):
         '''is the passed-in ridge part of this facet?
         If so, return the exclude_vert_index that defines the ridge, else None
@@ -447,35 +508,76 @@ def max_error_facet(facets):
 
     return rv
 
-def get_visible_and_horizon(new_pt, start_facet):
-    'get the visible facets and horizon ridges'
+def update_visible_and_horizon(new_pt, start_facet, interior_pt, epsilon, supp_point_func):
+    '''update the visible facets and horizon ridges, returning new facets
 
-    visible_facets = [start_facet]
-    horizon_ridges = [] # list of 2-tuples (facet, exclude_vert_index)
+    visible facets should be deleted by setting Facet.was_deleted to True
 
+    horizon facets should have their neighbors updated, specifically, visisble neighbors are
+    replaced by new facets that include new_pt
+    '''
+
+    dims = len(new_pt)
+    new_facets = []
     unprocessed = [start_facet]
+    start_facet.was_deleted = True # mark as visible facet
+
+    new_verthub = VertHub(new_pt)
 
     while unprocessed:
-        cur_facet = unprocessed.pop()
+        vis_facet = unprocessed.pop()
 
-        for neb_facet in cur_facet.neighbors:
-            assert neb_facet is not None
-
-            if neb_facet in visible_facets: # already processed
+        # figure out which neighbors share a ridge (have dim vertices in common)
+        Timers.tic('neighbors')
+        neighbors = vis_facet.neighbors()
+        Timers.toc('neighbors')
+            
+        for neb_facet in neighbors:
+            if neb_facet.was_deleted: # neighbor already processed (is a visible facet)
                 continue
 
             if neb_facet.is_visible(new_pt):
-                visible_facets.append(neb_facet)
+                neb_facet.was_deleted = True # mark as visible facet to prevent further checks
                 unprocessed.append(neb_facet)
-            else:
-                # neb_facet is a horizon facet, find the ridge shared between neb_facet and cur_facet
-                ridge_index = neb_facet.neighbors.index(cur_facet)
+                continue
+            
+            # neb_facet is a horizon facet, make a new facet that replaces vis_facet in the verthubs
+            new_facet_verthubs = []
+            vis_facet_locations = [] # list of 2-tuples (VertHub, index)
 
-                horizon_ridges.append((neb_facet, ridge_index))
+            print(f"\nlooking vis_facet ({vis_facet.facet_id}) in horizon_facet ({neb_facet.facet_id})'s verthubs")
+            
+            for verthub in neb_facet.verts:
+                print(f"checking verthub {verthub}: {[f.facet_id for f in verthub.facets]}")
+                
+                for i, facet in enumerate(verthub.facets):
+                    if facet is vis_facet:
+                        print(f"found at index {i}")
+                        vis_facet_locations.append((verthub, i))
+                        new_facet_verthubs.append(verthub)
+                        break # it will only be in there once
 
-    assert horizon_ridges, "no horizon ridges?"
+            PROBLEM HERE IS THAT ONCE WE REPLACE SOME FACETS IN VERTHUB, THE NEXT ITERATION CANT FIND VIS_FACET
+            assert len(new_facet_verthubs) == dims - 1, f"len(new_facet_verthubs) = {len(new_facet_verthubs)}"
+            new_facet_verthubs.append(new_verthub)
 
-    return visible_facets, horizon_ridges
+            # create the new facet
+            pts = [verthub.pt for verthub in new_facet_verthubs]
+            f_normal, f_rhs = hyperplane(pts, interior_pt)
+
+            # evaluate the error on the given face
+            f_supporting_pt = supp_point_func(f_normal)
+
+            f = Facet(new_facet_verthubs, f_normal, f_rhs, epsilon, f_supporting_pt)
+            new_facets.append(f)
+
+            # replace vis_facet in each of the horizon facet's verthubs
+            for verthub, index in vis_facet_locations:
+                verthub.facets[index] = f
+
+    assert new_facets, "no new facets"
+
+    return new_facets
 
 def make_new_facets(horizon_ridges, new_point, interior_pt, epsilon, supp_point_func):
     '''make and return new facets from a list of horizontal ridges and the new point
@@ -495,7 +597,9 @@ def make_new_facets(horizon_ridges, new_point, interior_pt, epsilon, supp_point_
         #print(f"new facet verts: {new_facet_verts}")
 
         # construct hyperplane through verts
+        Timers.tic('hyperplane')
         new_normal, new_rhs = hyperplane(new_facet_verts, interior_pt)
+        Timers.toc('hyperplane')
 
         # evaluate the error on the given face
         new_supporting_pt = supp_point_func(new_normal)
@@ -572,20 +676,10 @@ def verts_given_init_simplex(init_simplex_verts, dims, supp_point_func, epsilon=
     Timers.tic('init_faces construction')
     init_facets = [] # initial facets, ordered by which vertex was excluded to construct them
 
-    # construct facets from init_simplex_verts by excluding one of the vertices
-    for exclude_index in range(dims+1):
-        interior_pt = centroid(init_simplex_verts)
-        pts = init_simplex_verts[:exclude_index] + init_simplex_verts[exclude_index + 1:]
-
-        # construct hyperplane through pts
-        f_normal, f_rhs = hyperplane(pts, interior_pt)
-
-        # evaluate the error on the given face
-        f_supporting_pt = supp_point_func(f_normal)
-
-        f = Facet(pts, f_normal, f_rhs, epsilon, f_supporting_pt)
-
-        init_facets.append(f)
+    init_vert_hubs = [] # VertHub objects
+        
+    for v in init_simplex_verts:
+        init_vert_hubs.append(VertHub(v))
 
     # facets which are on the convex hull
     extreme_facets = [] 
@@ -594,40 +688,32 @@ def verts_given_init_simplex(init_simplex_verts, dims, supp_point_func, epsilon=
     # heap of tuples: (-error, facet_id, facet)   [-error is used so maximum error is popped first]
     non_extreme_facet_heap = [] 
 
-    # assign facet neighbors of init simplex
-    for init_facet in init_facets:
-        
-        for exclude_vert_index in range(len(init_facet.verts)):
-            # find the facet in init_facets which contains the ridge when exclude_vert_index is excluded from the facet
+    # construct facets from init_simplex_verts by excluding one of the vertices
+    for exclude_index in range(dims+1):
+        interior_pt = centroid(init_simplex_verts)
+        pts = init_simplex_verts[:exclude_index] + init_simplex_verts[exclude_index + 1:]
+        vert_hubs = init_vert_hubs[:exclude_index] + init_vert_hubs[exclude_index + 1:]
 
-            if init_facet.neighbors[exclude_vert_index] is not None:
-                continue # neighbor for this facet was already assigned
+        # construct hyperplane through pts
+        f_normal, f_rhs = hyperplane(pts, interior_pt)
 
-            # construct the ridge we're interested in:
-            ridge = init_facet.verts.copy()
-            del ridge[exclude_vert_index]
+        # evaluate the error on the given face
+        f_supporting_pt = supp_point_func(f_normal)
 
-            # search the OTHER facets for this ridge
-            for other_init_facet in init_facets:
-                if other_init_facet is init_facet:
-                    continue
+        f = Facet(vert_hubs, f_normal, f_rhs, epsilon, f_supporting_pt)
 
-                other_exclude_index = other_init_facet.get_ridge(ridge)
+        init_facets.append(f)
 
-                if other_exclude_index is not None:
-                    init_facet.neighbors[exclude_vert_index] = other_init_facet
-                    assert other_init_facet.neighbors[other_exclude_index] is None
-                    other_init_facet.neighbors[other_exclude_index] = init_facet
-                    break
-
-            assert init_facet.neighbors[exclude_vert_index] is not None, "neighbor of initial facet not found"
+        # add the facet to the vertex hub
+        for vert_hub in vert_hubs:
+            vert_hub.facets.append(f)
 
         # add the facet to either extreme_facets or non_extreme_facets
-        if init_facet.supporting_error is None:
-            extreme_facets.append(init_facet)
+        if f.supporting_error is None:
+            extreme_facets.append(f)
             print(f"init facet was extreme (on chull)")
         else:
-            tup = (-init_facet.supporting_error, init_facet.facet_id, init_facet)
+            tup = (-f.supporting_error, f.facet_id, f)
             heappush(non_extreme_facet_heap, tup)
             print(f"added non-extreme init facet with supporting error: {-tup[0]}")
 
@@ -661,30 +747,11 @@ def verts_given_init_simplex(init_simplex_verts, dims, supp_point_func, epsilon=
         
         rv.append(new_point)
 
-        interior_pt = centroid(max_f.verts + [new_point])
+        interior_pt = centroid([verthub.pt for verthub in max_f.verts] + [new_point])
 
-        Timers.tic('get_visible_and_horizon')
-        visible_facets, horizon_ridges = get_visible_and_horizon(new_point, max_f)
-        Timers.toc('get_visible_and_horizon')
-
-        print(f"num visible_facets: {len(visible_facets)}")
-        print(f"num horizon_ridges: {len(horizon_ridges)}")
-
-        # mark all visible facets as deleted
-        for vis_facet in visible_facets:
-            print(f"deleting visible facet {vis_facet.facet_id}")
-            vis_facet.was_deleted = True
-
-        # create new facets from each of the horizon ridges
-        # a horizon ridge consists of a tuple: (facet, exclude_vert_index)
-
-        Timers.tic('make_new_facets')
-        new_facets = make_new_facets(horizon_ridges, new_point, interior_pt, epsilon, supp_point_func)
-        Timers.toc('make_new_facets')
-
-        Timers.tic('assign_new_facet_neighbors')
-        assign_new_facet_neighbors(new_facets)
-        Timers.toc('assign_new_facet_neighbors')
+        Timers.tic('update_visible_and_horizon')
+        new_facets = update_visible_and_horizon(new_point, max_f, interior_pt, epsilon, supp_point_func)
+        Timers.toc('update_visible_and_horizon')
 
         # add the facet to either extreme_facets or non_extreme_facets
         for new_facet in new_facets:
