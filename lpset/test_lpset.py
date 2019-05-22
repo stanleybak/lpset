@@ -16,6 +16,27 @@ import lpset
 import lpplot
 from util import assert_verts_is_box, assert_verts_equals
 import kamenev
+from timerutil import Timers
+
+def test_box_nd():
+    'test verts3d on unit box'
+
+    dims = 5
+
+    m = lpset.from_box([[0, 1]] * dims)
+
+    Timers.tic('total')
+    verts = lpplot.get_verts_nd(m.lpi, dims)
+    Timers.toc('total')
+
+    assert len(verts) == 2**dims
+
+    Timers.print_stats()
+
+    assert False
+
+print(f"debug hardcoded test_box_nd")
+test_box_nd()
 
 def test_from_box():
     'tests from_box constructor'
@@ -111,16 +132,15 @@ def test_matthias_zonotopes():
     # zonotopes from Figure 2 of "On Computing the Minkowski Difference of Zonotopes" by Matthias Althoff
 
     # Z_m (shifted due to lack of center in our constructor)
-    if False:
-        m = lpset.from_centered_zonotope([[1, 0], [0, 1], [1, 1]])
-        expected = [[-2, -2], [-2, 0], [0, 2], [2, 2], [2, 0], [0, -2]]
-        assert_verts_equals(m.verts(), expected)
+    m = lpset.from_centered_zonotope([[1, 0], [0, 1], [1, 1]])
+    expected = [[-2, -2], [-2, 0], [0, 2], [2, 2], [2, 0], [0, -2]]
+    assert_verts_equals(m.verts(), expected)
 
 
-        # Z_{s,1}
-        s1 = lpset.from_centered_zonotope([[0.5, -0.25], [0, 0.25]])
-        expected = [[-0.5, 0], [-0.5, 0.5], [0.5, 0], [0.5, -0.5]]
-        assert_verts_equals(s1.verts(), expected)
+    # Z_{s,1}
+    s1 = lpset.from_centered_zonotope([[0.5, -0.25], [0, 0.25]])
+    expected = [[-0.5, 0], [-0.5, 0.5], [0.5, 0], [0.5, -0.5]]
+    assert_verts_equals(s1.verts(), expected)
 
     # Z_{s,2}
     s2 = lpset.from_centered_zonotope([[0.5, -0.5], [0, 0.5]])
@@ -131,11 +151,10 @@ def test_matthias_zonotopes():
     expected = [[-0.5, 0], [-0.5, 1.0], [0.5, 0], [0.5, -1.0]]
     assert_verts_equals(s2.verts(), expected)
 
-    if False:
-        # Z_{s,3}
-        s3 = lpset.from_centered_zonotope([[2.0, -0.5], [0, 0.5]])
-        expected = [[-2.0, 0], [-2.0, 1.0], [2.0, 0], [2.0, -1.0]]
-        assert_verts_equals(s3.verts(), expected)
+    # Z_{s,3}
+    s3 = lpset.from_centered_zonotope([[2.0, -0.5], [0, 0.5]])
+    expected = [[-2.0, 0], [-2.0, 1.0], [2.0, 0], [2.0, -1.0]]
+    assert_verts_equals(s3.verts(), expected)
 
 def test_3d_box_plot():
     'test verts3d on unit box'
@@ -150,10 +169,7 @@ def test_3d_box_plot():
     ax = fig.add_subplot(111, projection="3d")
     m.plot3d(ax)
 
-    #plt.show()
-
-print("debug 3dboxplot test")
-test_3d_box_plot()
+    plt.show()
 
 def test_3d_zonotope_plot():
     'test verts3d on zonotope'

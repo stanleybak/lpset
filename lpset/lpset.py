@@ -199,7 +199,9 @@ class LpSet(Freezable):
 
         pts = self.verts3d(xdim=xdim, ydim=ydim, zdim=zdim)
 
-        ax.plot(pts.T[0], pts.T[1], pts.T[2], 'k', ms=0.7)
+        xs, ys, zs = zip(*pts)
+
+        ax.plot(xs, ys, zs, 'k', ms=0.7)
 
         lpplot3d.plot_hull(ax, pts)
         
@@ -212,6 +214,7 @@ class LpSet(Freezable):
             row_vec = row.toarray()
 
             # figure out
+    
         
 def from_box(dim_interval_list):
     'make a new lpset from a passed-in box'

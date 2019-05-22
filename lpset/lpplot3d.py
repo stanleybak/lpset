@@ -28,6 +28,9 @@ def plot_simplex3d(ax, pts, col='r-'):
 def plot_hull(ax, pts, col='k'):
     'plot the 3d convex hull of pts onto the given axes'
 
+    if not isinstance(pts, np.ndarray):
+        pts = np.array(pts, dtype=float)
+
     hull = ConvexHull(pts)
 
     poly3d = []

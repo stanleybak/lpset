@@ -260,6 +260,13 @@ class LpInstance(Freezable):
             for i, val in enumerate(rhs_vec):
                 glpk.glp_set_row_bnds(self.lp, num_rows + i + 1, glpk.GLP_FX, val, val)  # '== val' constraints
 
+    def set_row_equal(self, row_num, rhs):
+        'set row equality constraint constraints[row_num] == rhs'
+
+        assert 0 <= row_num < self.get_num_rows()
+
+        glpk.glp_set_row_bnds(self.lp, row_num + 1, glpk.GLP_FX, rhs, rhs)  # '== rhs' constraint
+
     def add_rows_equal_zero(self, num):
         '''add rows to the LP with == 0 constraints'''
 
@@ -342,6 +349,23 @@ class LpInstance(Freezable):
 
             for i in range(num_vars):
                 glpk.glp_set_col_bnds(self.lp, num_cols + i + 1, glpk.GLP_FR, 0, 0)  # free variable (-inf, inf)
+
+    def add_double_bounded_cols(self, names, lb, ub):
+        'add a certain number of columns to the LP with the given lower and upper bound'
+
+        assert lb <= ub
+
+        assert isinstance(names, list)
+        num_vars = len(names)
+
+        if num_vars > 0:
+            num_cols = self.get_num_cols()
+
+            self.names += names
+            glpk.glp_add_cols(self.lp, num_vars)
+
+            for i in range(num_vars):
+                glpk.glp_set_col_bnds(self.lp, num_cols + i + 1, glpk.GLP_DB, lb, ub)  # double-bounded variable
 
     def set_constraints_csc(self, csc_mat, offset=None):
         '''set the constrains column by column to be equal to the passed-in csc matrix
