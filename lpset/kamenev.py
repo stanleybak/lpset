@@ -337,6 +337,7 @@ class VertHub(Freezable):
     def __init__(self, pt):
         self.pt = pt
         self.facets = []
+        self.id = VertHun.count
 
         self.freeze_attrs()
 
@@ -531,7 +532,9 @@ def update_visible_and_horizon(new_pt, start_facet, interior_pt, epsilon, supp_p
         Timers.tic('neighbors')
         neighbors = vis_facet.neighbors()
         Timers.toc('neighbors')
-            
+
+        vis_facet_verthub_to_index = {} # map verthub -> facet_index
+        
         for neb_facet in neighbors:
             if neb_facet.was_deleted: # neighbor already processed (is a visible facet)
                 continue
@@ -543,23 +546,27 @@ def update_visible_and_horizon(new_pt, start_facet, interior_pt, epsilon, supp_p
             
             # neb_facet is a horizon facet, make a new facet that replaces vis_facet in the verthubs
             new_facet_verthubs = []
-            vis_facet_locations = [] # list of 2-tuples (VertHub, index)
 
             print(f"\nlooking vis_facet ({vis_facet.facet_id}) in horizon_facet ({neb_facet.facet_id})'s verthubs")
             
             for verthub in neb_facet.verts:
                 print(f"checking verthub {verthub}: {[f.facet_id for f in verthub.facets]}")
+
+                # already found it here
+                if verthub in vis_facet_verthub_to_index:
+                    new_facet_verthubs.append(verthub)
                 
                 for i, facet in enumerate(verthub.facets):
                     if facet is vis_facet:
                         print(f"found at index {i}")
-                        vis_facet_locations.append((verthub, i))
                         new_facet_verthubs.append(verthub)
+
+                        if verthub not in vis_facet_verthub_to_index:
+                            vis_facet_verthub_to_index[verthub] = i
                         break # it will only be in there once
 
-            PROBLEM HERE IS THAT ONCE WE REPLACE SOME FACETS IN VERTHUB, THE NEXT ITERATION CANT FIND VIS_FACET
             assert len(new_facet_verthubs) == dims - 1, f"len(new_facet_verthubs) = {len(new_facet_verthubs)}"
-            new_facet_verthubs.append(new_verthub)
+            new_facet_verthubs.append(new_verthub) # add it to the verthub
 
             # create the new facet
             pts = [verthub.pt for verthub in new_facet_verthubs]
@@ -571,9 +578,9 @@ def update_visible_and_horizon(new_pt, start_facet, interior_pt, epsilon, supp_p
             f = Facet(new_facet_verthubs, f_normal, f_rhs, epsilon, f_supporting_pt)
             new_facets.append(f)
 
-            # replace vis_facet in each of the horizon facet's verthubs
-            for verthub, index in vis_facet_locations:
-                verthub.facets[index] = f
+        # replace vis_facet in each of the stored vis_facet_verthubs
+        for verthub, index in vis_facet_verthub_t_index.entries():
+            del verthub[index]            
 
     assert new_facets, "no new facets"
 
