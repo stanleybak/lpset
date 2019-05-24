@@ -8,18 +8,63 @@ import time
 import numpy as np
 from scipy.spatial import ConvexHull
 
+import matplotlib.pyplot as plt
+
 def main():
     'main entry point'
 
-    dims = 6
+    dims = 4
+    num_verts = 2**dims
 
-    verts = rand(dims, 20 * 2**dims)
+    verts = rand(dims, num_verts)
+
+    #new_pt = [1] * dims # corner
+    new_pt = [1] + [0] * (dims - 1) # edge
+
+    verts.append(new_pt)
+    
     #verts = cube(dims)
+
+    # QG<index> - exclude index in points list, save visible facets to hull.good
+    # Qv<index> Qg Q0 - only construct facets to include hull.good
     
     print(f"dims: {dims}, len(verts): {len(verts)}")
     start = time.time()
-    hull = ConvexHull(verts)
-    print(f"simplices: {len(hull.simplices)}; runtime: {time.time() - start}")
+    hull = ConvexHull(verts, qhull_options=f"QG{len(verts) - 1} Qg")
+    print(f"Runtime: {time.time() - start}")
+    
+    print(f"hull.points: {len(hull.points)}; hull.simplices: {len(hull.simplices)}")
+    print(f"hull.good?: {'<None>' if hull.good is None else sum(hull.good)}")
+
+    print(hull.simplices)
+    
+
+    plot = False
+    
+    if plot:
+        fig = plt.figure()
+        ax = fig.add_subplot(1, 1, 1)
+
+        points = np.array(verts, dtype=float)
+        ax.plot(points[:, 0], points[:, 1], 'o')
+
+        if hull.good is not None:
+            for visible_facet in hull.simplices[hull.good]:
+                ax.plot(hull.points[visible_facet, 0],
+                        hull.points[visible_facet, 1],
+                        color='violet', lw=5)
+
+
+        for simplex in hull.simplices:
+            ax.plot(points[simplex, 0], points[simplex, 1], 'k-')
+
+        plt.show()
+
+    #new_pt = [1] * dims # corner
+    #new_pt = [1] + [0] * (dims - 1) # edge
+
+    # equations for hyperplane:
+    # (hull.equations[i,:-1] * coord).sum() + hull.equations[i,-1] == 0
 
     # rand summary
     # 2 dims: 4 simplices

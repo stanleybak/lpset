@@ -11,6 +11,7 @@ from termcolor import colored
 
 import swiglpk as glpk
 from util import Freezable
+from timerutil import Timers
 
 class LpInstance(Freezable):
     'Linear programming wrapper using glpk (through swiglpk python interface)'
@@ -606,17 +607,23 @@ class LpInstance(Freezable):
         if direction_vec is not None:
             self.set_minimize_direction(direction_vec)
 
+        Timers.tic('setup')
         # setup lp params
         params = glpk.glp_smcp()
         glpk.glp_init_smcp(params)
         params.meth = glpk.GLP_DUALP # use dual simplex since we're reoptimizing often
         params.msg_lev = glpk.GLP_MSG_OFF
         params.tm_lim = 1000 # 1000 ms time limit
+        Timers.toc('setup')
 
+        Timers.tic('glp_simplex')
         simplex_res = glpk.glp_simplex(self.lp, params)
+        Timers.toc('glp_simplex')
 
         # process simplex result
+        Timers.tic('process_simplex_result')
         rv = self._process_simplex_result(simplex_res, columns)
+        Timers.toc('process_simplex_result')
 
         if rv is None and fail_on_unsat:
             print("Note: minimize failed with fail_on_unsat was true, resetting and retrying...")

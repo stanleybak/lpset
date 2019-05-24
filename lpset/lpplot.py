@@ -12,6 +12,8 @@ import numpy as np
 
 import kamenev
 
+from timerutil import Timers
+
 def pt_to_plot_xy(pt, xdim=0, ydim=1, cur_time=0.0):
     '''convert a point to an x/y pair for plotting
     xdim and ydim can be either an integer (dimension number), an np.array (direction), or None (time will be used)
@@ -52,21 +54,33 @@ def get_verts_nd(lpi, dims):
 
         assert len(vec) == len(dim_list)
 
+        Timers.tic('construct')
         d = np.zeros((lpi.dims,), dtype=float)
         # negative here because we want to MAXIMIZE not minimize
 
         for i, dim_index in enumerate(dim_list):
             d[dim_index] = -vec[i]
 
-        lpi.set_minimize_direction(d)
-        res = lpi.minimize(columns=[lpi.cur_vars_offset + n for n in range(lpi.dims)])
+        Timers.toc('construct')
 
+        Timers.tic('set_minimize_dir')
+        lpi.set_minimize_direction(d)
+        Timers.toc('set_minimize_dir')
+
+        Timers.tic('lpi.minimize')
+        res = lpi.minimize(columns=[lpi.cur_vars_offset + n for n in range(lpi.dims)])
+        Timers.toc('lpi.minimize')
+
+        Timers.tic('make res')
         rv = []
 
         for dim in dim_list:
             rv.append(res[dim])
         
-        return np.array(rv, dtype=float)
+        rv = np.array(rv, dtype=float)
+        Timers.toc('make res')
+
+        return rv
 
     return kamenev.get_verts(len(dim_list), supp_point_nd)
 

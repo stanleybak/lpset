@@ -4,9 +4,6 @@ Tests for LP operations. Made for use with py.test:
 > python3 -m pytest test_*.py
 '''
 
-import random
-import numpy as np
-
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
@@ -15,7 +12,6 @@ import swiglpk as glpk
 import lpset
 import lpplot
 from util import assert_verts_is_box, assert_verts_equals
-import kamenev
 from timerutil import Timers
 
 def test_box_nd():
@@ -32,11 +28,6 @@ def test_box_nd():
     assert len(verts) == 2**dims
 
     Timers.print_stats()
-
-    assert False
-
-print(f"debug hardcoded test_box_nd")
-test_box_nd()
 
 def test_from_box():
     'tests from_box constructor'
@@ -358,84 +349,4 @@ def test_minkowski_difference():
 
     plt.show()
 
-def test_hyperplane2d():
-    'test constructing the normal of the hyperplane through some points'
 
-    pts = [[1, 1], [2, 1]]
-
-    normal, rhs = kamenev.hyperplane(pts, [0, 0])
-    
-    # result: y = 1
-    assert np.allclose(normal, [0, 1])
-    assert np.allclose(1, [rhs])
-
-    normal, rhs = kamenev.hyperplane(pts, [0, 3])
-    
-    # result: -y = -1
-    assert np.allclose(normal, [0, -1])
-    assert np.allclose(-1, [rhs])
-
-def test_hyperplane3d():
-    'test hyperplane construction in 3d'
-
-    pts = [[0, 1, 0], [0, 0, 1], [0, 0, 0]]
-    normal, rhs = kamenev.hyperplane(pts, [0.5, 0.5, 0.5])
-
-    for pt in pts:
-        assert np.allclose([np.dot(pt, normal)], [rhs])
-
-def test_regular_simplex_vecs():
-    'tests for n dimensional regular simplex'
-
-    for dims in [2, 3, 5, 10]:
-
-        pts = kamenev.regular_simplex_vecs(dims)
-        assert len(pts) == dims + 1
-
-        # compute centroid
-        centroid_sum = [0] * dims
-
-        for pt in pts:
-            assert len(pt) == dims
-
-            for index, x in enumerate(pt):
-                centroid_sum[index] += x
-
-        for index in range(dims):
-            centroid_sum[index] /= len(pts)
-
-        assert np.allclose(np.array(centroid_sum), np.zeros((dims,))), "centroid was not zero"
-
-        # make sure each vec is equidistant from the other ones
-        random.seed(0)
-        num_samples = 10
-
-        for _ in range(num_samples):
-            # pick two random edges
-
-            index_a = random.randint(0, dims)
-            index_b = random.randint(0, dims - 1)
-
-            # make sure we don't pick the same index
-            if index_b >= index_a:
-                index_b += 1
-
-            a = np.array(pts[index_a], dtype=float)
-            b = np.array(pts[index_b], dtype=float)
-
-            index_c = random.randint(0, dims)
-            index_d = random.randint(0, dims - 1)
-
-            # make sure we don't pick the same index
-            if index_d >= index_c:
-                index_d += 1
-
-            c = np.array(pts[index_c], dtype=float)
-            d = np.array(pts[index_d], dtype=float)
-
-            dist_ab = np.linalg.norm(a - b)
-            dist_cd = np.linalg.norm(c - d)
-            tol = 1e-9
-
-            assert abs(dist_ab - dist_cd) < tol, f"distance between points {index_a} and {index_b} ({dist_ab}) is " + \
-                f"different distance between points {index_c} and {index_d} ({dist_cd})"

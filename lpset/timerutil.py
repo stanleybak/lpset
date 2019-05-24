@@ -155,7 +155,7 @@ class Timers():
         'recursively print information about a timer'
 
         low_threshold = 5.0
-        high_threshold = 50.0
+        high_threshold = 25.0
 
         if level == 0:
             total_time = td.total_secs
@@ -202,7 +202,7 @@ class Timers():
             other = td.total_secs - total_children_secs
             other_percent = 100 * other / td.total_secs
 
-            percent_other = other / total_time
+            percent_other = 100 * other / total_time
 
             if percent_other < low_threshold:
                 def other_print_func(text):
